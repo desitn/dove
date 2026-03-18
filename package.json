@@ -1,0 +1,61 @@
+{
+  "name": "firmware-cli",
+  "version": "1.0.0",
+  "description": "CLI tool for firmware compilation and flashing, supports AI assistant integration",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "test": "ts-node src/index.ts help",
+    "build": "tsc",
+    "build:watch": "tsc --watch",
+    "build:exe": "npm run build && pkg . --targets node18-win-x64 --output ./firmware-cli.exe",
+    "dev": "ts-node src/index.ts",
+    "clean": "rimraf dist"
+  },
+  "keywords": [
+    "firmware",
+    "cli",
+    "flash",
+    "compile",
+    "quectel",
+    "asr",
+    "unisoc",
+    "eigen"
+  ],
+  "author": "destin.zhang@quectel.com",
+  "license": "MIT",
+  "dependencies": {
+    "@serialport/parser-readline": "^12.0.0",
+    "adm-zip": "^0.5.10",
+    "iconv-lite": "^0.6.3",
+    "serialport": "^12.0.0"
+  },
+  "bin": {
+    "firmware-cli": "./dist/index.js"
+  },
+  "pkg": {
+    "scripts": [
+      "dist/*.js"
+    ],
+    "assets": [
+      "tools/**/*",
+      "node_modules/adm-zip/**/*",
+      "node_modules/iconv-lite/**/*",
+      "node_modules/serialport/**/*",
+      "node_modules/@serialport/**/*"
+    ]
+  },
+  "devDependencies": {
+    "@types/adm-zip": "^0.5.8",
+    "@types/node": "^25.5.0",
+    "rimraf": "^6.1.3",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.3"
+  },
+  "files": [
+    "dist",
+    "tools",
+    "README.md",
+    "package.json"
+  ]
+}

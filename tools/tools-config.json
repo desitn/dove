@@ -1,0 +1,138 @@
+{
+  "version": "1.0.0",
+  "description": "固件下载工具配置",
+  "tools": {
+    "ad": {
+      "name": "adownload",
+      "path": "adownload.exe",
+      "description": "ASR 160X 下载工具",
+      "args": {
+        "flash": ["-r", "-q", "-a", "-u", "-s", "115200", "{firmwarePath}"],
+        "default": []
+      }
+    },
+    "fbf": {
+      "name": "FBFDownloader",
+      "path": "FBFDownloader.exe",
+      "description": "ASR 1X03 下载工具",
+      "args": {
+        "flash": ["-b", "{firmwarePath}"],
+        "default": []
+      }
+    },
+    "pac": {
+      "name": "CmdDloader",
+      "path": "pacdownload/CmdDloader.exe",
+      "description": "UNISOC 下载工具",
+      "args": {
+        "flash": ["-pac", "{firmwarePath}"],
+        "default": []
+      }
+    },
+    "ecf": {
+      "name": "ECFlashTool",
+      "path": "ecflashtool/ECFlashTool.exe",
+      "description": "Eigen 下载工具",
+      "args": {
+        "flash": ["-f", "{firmwarePath}", "--timeout", "60"],
+        "default": []
+      }
+    }
+  },
+  "platforms": {
+    "asr160x": {
+      "type": "ad",
+      "extensions": [".zip"],
+      "description": "ASR 160X 系列",
+      "autoDetect": {
+        "zipContains": ["download.json"]
+      },
+      "serial": {
+        "atPortPatterns": ["at port", "modem"],
+        "atCommand": "AT+QDOWNLOAD=1",
+        "baudrate": 115200,
+        "autoEnterDlMode": true,
+        "downloadPortPatterns": ["download"],
+        "downloadPortVidPid": [
+          { "vid": "2ECC", "pid": "3004", "desc": "BOOT" }
+        ]
+      },
+      "progressPatterns": {
+        "started": ["CONNECTING"],
+        "downloading": ["RUNNING"],
+        "completed": ["SUCCEEDED"],
+        "error": ["error", "timeout"]
+      }
+    },
+    "asr1x03": {
+      "type": "fbf",
+      "extensions": ["_fbf.bin"],
+      "description": "ASR 180X/190X 系列",
+      "serial": {
+        "atPortPatterns": ["at port", "modem"],
+        "atCommand": "AT+QDOWNLOAD=1",
+        "baudrate": 115200,
+        "autoEnterDlMode": true,
+        "downloadPortPatterns": ["download"],
+        "downloadPortVidPid": [
+          { "vid": "2ECC", "pid": "3001", "desc": "BOOT" },
+          { "vid": "2ECC", "pid": "3002", "desc": "BOOT" }
+        ]
+      },
+      "progressPatterns": {
+        "started": ["init", "initializing"],
+        "downloading": ["download", "burning"],
+        "completed": ["complete", "success"],
+        "error": ["error", "fail", "failed", "timeout"]
+      }
+    },
+    "unisoc": {
+      "type": "pac",
+      "extensions": [".pac"],
+      "description": "UNISOC 8310/8910/8850",
+      "serial": {
+        "atPortPatterns": ["at port", "modem"],
+        "atCommand": "AT+QDOWNLOAD=1",
+        "atCommandForce": "AT+QDOWNLOAD=2",
+        "baudrate": 115200,
+        "autoEnterDlMode": true,
+        "downloadPortPatterns": ["SPRD U2S Diag"],
+        "downloadPortVidPid": [
+          { "vid": "1782", "pid": "4d00", "desc": "BOOT" }
+        ]
+      }
+ 
+    },
+    "eigen": {
+      "type": "ecf",
+      "extensions": ["_download_usb.bin"],
+      "description": "Eigen 618/718",
+      "serial": {
+        "atPortPatterns": ["at port", "modem"],
+        "atCommand": "AT+QDOWNLOAD=1",
+        "baudrate": 115200,
+        "autoEnterDlMode": true,
+        "downloadPortPatterns": ["download"],
+        "downloadPortVidPid": [
+          { "vid": "17d1", "pid": "0001", "desc": "BOOT" }
+        ]
+      }
+    },
+    "esp": {
+      "type": "esp",
+      "extensions": [".bin"],
+      "description": "ESP S3/C6"
+    }
+  },
+  "settings": {
+    "defaultPort": "auto",
+    "timeout": 300,
+    "retryCount": 3
+  },
+  "serial": {
+    "baudrate": 115200,
+    "dataBits": 8,
+    "parity": "none",
+    "stopBits": 1
+  }
+}

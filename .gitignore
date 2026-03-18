@@ -1,0 +1,10 @@
+dist/
+.venv/
+.vscode/
+*.log
+tools/*.log
+tools/detect_dl/*
+tools/ecflashtool/*
+tools/pacdownload/*
+quectel_build/
+node_modules
