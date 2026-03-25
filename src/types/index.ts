@@ -68,7 +68,7 @@ export interface GlobalSettings {
  * Output configuration
  */
 export interface OutputConfig {
-  progressMode: 'single-line' | 'multi-line';
+  progressMode: 'single-line' | 'multi-line' | 'json';
   verbose: boolean;
   timestamp: boolean;
 }

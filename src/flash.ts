@@ -21,6 +21,7 @@ import { enterDownloadMode, findDownloadPort } from './serial';
 
 interface FlashOptions {
   skipDlMode?: boolean;
+  progressMode?: string | null;
 }
 
 interface RefObject {
@@ -102,7 +103,7 @@ export async function flashFirmware(firmwarePath: string | null = null, options:
     console.log('Starting flash...');
     console.log('='.repeat(50));
     
-    await executeFlash(toolPath, firmwareInfo.type, firmwareInfo.file);
+    await executeFlash(toolPath, firmwareInfo.type, firmwareInfo.file, options.progressMode);
     
     console.log('='.repeat(50));
     console.log('Flash completed successfully!');
@@ -216,7 +217,7 @@ function createProgressBar(percentage: number, width: number = 20): string {
 /**
  * Execute flash command
  */
-async function executeFlash(toolPath: string, toolType: string, firmwareFile: string): Promise<void> {
+async function executeFlash(toolPath: string, toolType: string, firmwareFile: string, progressMode?: string | null): Promise<void> {
   return new Promise<void>(async (resolve, reject) => {
     let command: string;
     let args: string[];
@@ -266,6 +267,11 @@ async function executeFlash(toolPath: string, toolType: string, firmwareFile: st
     // Get output configuration
     const config = loadToolsConfig();
     const outputConfig = config.outputConfig || { progressMode: 'single-line', verbose: false, timestamp: false };
+    
+    // Override progressMode if specified in options
+    if (progressMode) {
+      outputConfig.progressMode = progressMode as 'single-line' | 'multi-line' | 'json';
+    }
     
     // Progress tracking - stage-based pseudo progress
     let currentProgress = 0;
@@ -353,13 +359,21 @@ async function executeFlash(toolPath: string, toolType: string, firmwareFile: st
     // Output progress based on mode
     const outputProgress = (progress: number, status: string, mode: string) => {
       const progressInt = Math.floor(progress);
-      const progressBar = createProgressBar(progressInt);
-      const statusText = getStatusText(status);
       
-      if (mode === 'single-line') {
+      if (mode === 'json') {
+        const jsonOutput = {
+          progress: progressInt,
+          status: status,
+          message: getStatusText(status)
+        };
+        console.log(JSON.stringify(jsonOutput));
+      } else if (mode === 'single-line') {
+        const progressBar = createProgressBar(progressInt);
+        const statusText = getStatusText(status);
         process.stdout.write(`\r${progressBar} ${progressInt}% ${statusText}`);
       } else {
         // multi-line mode
+        const statusText = getStatusText(status);
         const timestamp = outputConfig.timestamp ? `[${new Date().toISOString()}] ` : '';
         console.log(`${timestamp}Progress: ${progressInt}% ${statusText}`);
       }
@@ -492,17 +506,27 @@ async function executeFlash(toolPath: string, toolType: string, firmwareFile: st
   });
 }
 
+interface DevicesOptions {
+  json?: boolean;
+}
+
 /**
  * List USB devices
  */
-export async function listDevices(): Promise<string[]> {
+export async function listDevices(options: DevicesOptions = {}): Promise<string[]> {
   if (!isWindows()) {
-    console.log('Device list function only available on Windows');
+    if (options.json) {
+      console.log(JSON.stringify({ devices: [], count: 0, error: 'Device list function only available on Windows' }));
+    } else {
+      console.log('Device list function only available on Windows');
+    }
     return [];
   }
   
-  console.log('Searching for USB devices...');
-  console.log('='.repeat(50));
+  if (!options.json) {
+    console.log('Searching for USB devices...');
+    console.log('='.repeat(50));
+  }
   
   const command = 'wmic path Win32_PnPEntity where "Name like \'%USB%\' OR Name like \'%Quectel%\'" get Name';
   
@@ -533,20 +557,28 @@ export async function listDevices(): Promise<string[]> {
       }
     }
     
-    if (devices.length === 0) {
-      console.log('No USB devices found');
+    if (options.json) {
+      console.log(JSON.stringify({ devices, count: devices.length }, null, 2));
     } else {
-      devices.sort((a, b) => a.localeCompare(b));
-      console.log(`Found ${devices.length} device(s):\n`);
-      devices.forEach((device, index) => {
-        console.log(`${index + 1}. ${device}`);
-      });
+      if (devices.length === 0) {
+        console.log('No USB devices found');
+      } else {
+        devices.sort((a, b) => a.localeCompare(b));
+        console.log(`Found ${devices.length} device(s):\n`);
+        devices.forEach((device, index) => {
+          console.log(`${index + 1}. ${device}`);
+        });
+      }
     }
     
     return devices;
   } catch (error) {
     const err = error as Error;
-    console.error('Failed to get device list:', err.message);
+    if (options.json) {
+      console.log(JSON.stringify({ devices: [], count: 0, error: err.message }, null, 2));
+    } else {
+      console.error('Failed to get device list:', err.message);
+    }
     return [];
   }
 }

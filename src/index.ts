@@ -191,16 +191,22 @@ async function main(): Promise<number> {
     switch (command) {
       case 'flash': {
         const skipDlMode = args.includes('--skip-dl-mode') || args.includes('-s');
-        const firmwarePath = args.find(arg => !arg.startsWith('-')) || null;
-        await flashFirmware(firmwarePath, { skipDlMode });
+        const progressIndex = args.findIndex(arg => arg === '--progress');
+        const progressMode = progressIndex !== -1 ? args[progressIndex + 1] : null;
+        const firmwarePath = args.find(arg => !arg.startsWith('-') && (progressIndex === -1 || args.indexOf(arg) !== progressIndex + 1)) || null;
+        await flashFirmware(firmwarePath, { skipDlMode, progressMode });
         return 0;
       }
-      case 'list':
-        await listFirmware();
+      case 'list': {
+        const jsonMode = args.includes('--json');
+        await listFirmware({ json: jsonMode });
         return 0;
-      case 'devices':
-        await listDevices();
+      }
+      case 'devices': {
+        const jsonMode = args.includes('--json');
+        await listDevices({ json: jsonMode });
         return 0;
+      }
       case 'serial':
         await showSerialList();
         return 0;

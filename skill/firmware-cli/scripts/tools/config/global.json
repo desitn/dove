@@ -13,7 +13,7 @@
     "stopBits": 1
   },
   "outputConfig": {
-    "progressMode": "multi-line",
+    "progressMode": "single-line",
     "verbose": false,
     "timestamp": false
   }
