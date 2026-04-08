@@ -2,7 +2,7 @@
 
 import { flashFirmware, listDevices } from './flash';
 import { listFirmware } from './list';
-import { compileFirmware, setConfig, showConfig } from './compile';
+import { compileFirmware, listBuildCommands, setConfig, showConfig } from './compile';
 import { loadToolsConfig, loadConfig } from './utils';
 import { showSerialList, openAndMonitorPort, sendATCommandCLI, findATPort } from './serial';
 import type { MonitorOptions, CLIConfig } from './types';
@@ -67,7 +67,10 @@ Commands:
     -t, --timeout <ms>  Set timeout in milliseconds (default 5000)
     --platform <type>   Platform for auto-detect (default asr160x)
     --json              Output results in JSON format
-  build [command]       Compile firmware
+  build [options]       Compile firmware
+    --list, -l          List all available commands
+    -i, --index <n>     Run command by index (1-based)
+    -n, --name <name>   Run command by name
   build-and-flash       Compile and flash latest firmware
   config                Show current configuration
   config set <key> <value>  Set configuration item
@@ -75,7 +78,12 @@ Commands:
 
 Examples:
   firmware-cli.exe flash
-  firmware-cli.exe build
+  firmware-cli.exe build              # Run default build command
+  firmware-cli.exe build --list       # List all build commands
+  firmware-cli.exe build -i 1         # Run command by index
+  firmware-cli.exe build --index 1    # Run command by index
+  firmware-cli.exe build -n install   # Run command by name
+  firmware-cli.exe build --name install # Run command by name
   firmware-cli.exe build-and-flash
   firmware-cli.exe list
   firmware-cli.exe serial
@@ -260,9 +268,41 @@ async function main(): Promise<number> {
         
         return 0;
       }
-      case 'build':
-        await compileFirmware(args[0] || null);
+      case 'build': {
+        // Parse build command arguments
+        const getArgValue = (short: string | null, long: string): string | null => {
+          const index = args.findIndex(arg => arg === short || arg === long);
+          return index !== -1 ? args[index + 1] : null;
+        };
+        
+        const hasFlag = (short: string | null, long: string): boolean => {
+          return args.includes(short || '') || args.includes(long);
+        };
+        
+        // Check for --list or -l flag
+        if (hasFlag('-l', '--list')) {
+          await listBuildCommands();
+          return 0;
+        }
+        
+        // Check for -i or --index
+        const indexValue = getArgValue('-i', '--index');
+        if (indexValue) {
+          await compileFirmware(indexValue);
+          return 0;
+        }
+        
+        // Check for -n or --name
+        const nameValue = getArgValue('-n', '--name');
+        if (nameValue) {
+          await compileFirmware(nameValue);
+          return 0;
+        }
+        
+        // No options provided, run default command
+        await compileFirmware(null);
         return 0;
+      }
       case 'build-and-flash':
         await compileFirmware(args[0] || null);
         await flashFirmware(null);

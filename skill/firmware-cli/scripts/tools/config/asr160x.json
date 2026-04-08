@@ -7,7 +7,7 @@
       "zipContains": ["download.json"]
     },
     "serial": {
-      "atPortPatterns": ["at port", "modem"],
+      "atPortPatterns": ["at port", "at usb"],
       "atCommand": "AT+QDOWNLOAD=1",
       "baudrate": 115200,
       "autoEnterDlMode": true,

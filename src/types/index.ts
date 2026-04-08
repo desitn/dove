@@ -131,11 +131,21 @@ export interface FirmwareInfo {
 }
 
 /**
+ * Build command item
+ */
+export interface BuildCommandItem {
+  name: string;
+  command: string;
+}
+
+/**
  * CLI configuration file (firmware-cli.json)
  */
 export interface CLIConfig {
   firmwarePath?: string;
   buildCommand?: string;
+  buildCommands?: BuildCommandItem[];
+  lastBuildCommand?: string;
   buildGitBashPath?: string;
   defaultComPort?: string;
   workspacePath?: string;

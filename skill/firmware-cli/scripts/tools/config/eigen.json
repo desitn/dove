@@ -4,7 +4,7 @@
     "extensions": ["_download_usb.ini"],
     "description": "Eigen 618/718",
     "serial": {
-      "atPortPatterns": ["at port", "modem"],
+      "atPortPatterns": ["at port", "at usb"],
       "atCommand": "AT+QDOWNLOAD=1",
       "baudrate": 115200,
       "autoEnterDlMode": true,

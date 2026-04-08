@@ -4,7 +4,7 @@
     "extensions": [".pac"],
     "description": "UNISOC 8310/8910/8850",
     "serial": {
-      "atPortPatterns": ["at port", "modem"],
+      "atPortPatterns": ["at port", "at usb"],
       "atCommand": "AT+QDOWNLOAD=1",
       "atCommandForce": "AT+QDOWNLOAD=2",
       "baudrate": 115200,
