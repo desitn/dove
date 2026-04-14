@@ -1,0 +1,12 @@
+{
+  "firmwarePath": "",
+  "buildCommands": [],
+  "buildGitBashPath": "",
+  "defaultComPort": "",
+  "comPorts": [],
+  "language": "auto",
+  "theme": {
+    "mode": "auto",
+    "accent": "blue"
+  }
+}

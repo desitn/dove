@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Settings</title>
+    <link rel="stylesheet" href="../style.css">
+    <link rel="stylesheet" href="../assets/fontawesome/all.min.css">
+    <link rel="stylesheet" href="settings.css">
+</head>
+<body>
+    <div class="settings-container">
+        <!-- Left Sidebar -->
+        <aside class="settings-sidebar">
+            <div class="sidebar-header">
+                <h1><i class="fa-solid fa-gear"></i> Settings</h1>
+            </div>
+            <nav class="sidebar-nav">
+                <a class="nav-item" data-section="commands">
+                    <i class="fa-solid fa-terminal"></i>
+                    <span class="nav-text">Build Commands</span>
+                </a>
+                <a class="nav-item active" data-section="firmware">
+                    <i class="fa-solid fa-folder-open"></i>
+                    <span class="nav-text">Firmware Path</span>
+                </a>
+                <a class="nav-item" data-section="comport">
+                    <i class="fa-solid fa-plug"></i>
+                    <span class="nav-text">COM Ports</span>
+                </a>
+                <a class="nav-item" data-section="gitbash">
+                    <i class="fa-brands fa-git-alt"></i>
+                    <span class="nav-text">Git Bash Path</span>
+                </a>
+                <a class="nav-item" data-section="language">
+                    <i class="fa-solid fa-language"></i>
+                    <span class="nav-text">Language</span>
+                </a>
+                <a class="nav-item" data-section="theme">
+                    <i class="fa-solid fa-palette"></i>
+                    <span class="nav-text">Theme</span>
+                </a>
+                <a class="nav-item" data-section="config">
+                    <i class="fa-solid fa-file-code"></i>
+                    <span class="nav-text">Config File</span>
+                </a>
+            </nav>
+            <div class="sidebar-footer">
+                <button class="btn btn-secondary" onclick="resetToDefaults()">
+                    <i class="fa-solid fa-rotate-left"></i> Reset
+                </button>
+                <button class="btn btn-primary" onclick="saveSettings()">
+                    <i class="fa-solid fa-save"></i> Save
+                </button>
+            </div>
+        </aside>
+
+        <!-- Right Content Area -->
+        <main class="settings-content">
+            <div class="content-header">
+                <h2 id="contentTitle"><i class="fa-solid fa-folder-open"></i> Firmware Path</h2>
+            </div>
+
+            <div class="content-body">
+                <!-- Firmware Path Section -->
+                <section id="firmware" class="content-section active">
+                    <div class="settings-section">
+                        <h3><i class="fa-solid fa-folder-open"></i> Firmware Path</h3>
+                        <div class="config-item">
+                            <label>Firmware Directory</label>
+                            <div class="description">Path to firmware files or build output directory</div>
+                            <div class="path-input-group">
+                                <input type="text" id="firmwarePath" placeholder="Select firmware directory..." data-modified="false">
+                                <button class="btn btn-secondary" onclick="browseFirmwarePath()">
+                                    <i class="fa-solid fa-folder-open"></i> Browse
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Build Commands Section -->
+                <section id="commands" class="content-section">
+                    <div class="settings-section">
+                        <h3><i class="fa-solid fa-terminal"></i> Build Commands</h3>
+                        <div class="config-item">
+                            <div class="description">Configure build scripts and commands</div>
+                            <div id="commandListContainer">
+                                <table class="command-table" id="commandTable">
+                                    <thead>
+                                        <tr>
+                                            <th>Name</th>
+                                            <th>Description</th>
+                                            <th>Command</th>
+                                            <th>Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="commandTableBody"></tbody>
+                                </table>
+                                <div class="no-commands" id="noCommandsMsg">No commands configured</div>
+                            </div>
+                            <div class="add-command-form">
+                                <h4><i class="fa-solid fa-plus"></i> Add Command</h4>
+                                <div class="form-row">
+                                    <input type="text" id="newCommandName" placeholder="Command name">
+                                    <input type="text" id="newCommandDesc" placeholder="Description">
+                                    <input type="text" id="newCommandValue" placeholder="Command/script">
+                                </div>
+                                <div class="form-row">
+                                    <button class="btn btn-secondary" onclick="selectScriptFile()">
+                                        <i class="fa-solid fa-file-code"></i> Select Script
+                                    </button>
+                                    <button class="btn btn-primary" onclick="addCommand()">
+                                        <i class="fa-solid fa-plus"></i> Add
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Git Bash Path Section -->
+                <section id="gitbash" class="content-section">
+                    <div class="settings-section">
+                        <h3><i class="fa-brands fa-git-alt"></i> Git Bash Path</h3>
+                        <div class="config-item">
+                            <label>Git Bash Executable</label>
+                            <div class="description">Path to Git Bash for running shell scripts</div>
+                            <div class="path-input-group">
+                                <input type="text" id="gitBashPath" placeholder="Auto-detect or select..." data-modified="false">
+                                <button class="btn btn-secondary" onclick="browseGitBashPath()">
+                                    <i class="fa-solid fa-file-code"></i> Browse
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- COM Ports Section -->
+                <section id="comport" class="content-section">
+                    <div class="settings-section">
+                        <h3><i class="fa-solid fa-plug"></i> COM Ports</h3>
+                        <div class="config-item">
+                            <div class="description">Configure serial ports with tags for different purposes</div>
+                            <div id="portListContainer">
+                                <table class="port-table" id="portTable">
+                                    <thead>
+                                        <tr>
+                                            <th>Port</th>
+                                            <th>Tags</th>
+                                            <th>Description</th>
+                                            <th>Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="portTableBody"></tbody>
+                                </table>
+                                <div class="no-ports" id="noPortsMsg">No ports configured</div>
+                            </div>
+                            <div class="add-port-form">
+                                <h4><i class="fa-solid fa-plus"></i> Add Port</h4>
+                                <div class="form-row">
+                                    <input type="text" id="newPortName" placeholder="COM port (e.g. COM3)">
+                                    <input type="text" id="newPortDesc" placeholder="Description">
+                                </div>
+                                <div class="form-row tag-selector-row">
+                                    <div class="tag-selector">
+                                        <label class="tag-checkbox"><input type="checkbox" value="AT"> <span class="tag-badge tag-at">AT</span></label>
+                                        <label class="tag-checkbox"><input type="checkbox" value="Download"> <span class="tag-badge tag-download">Download</span></label>
+                                        <label class="tag-checkbox"><input type="checkbox" value="Log"> <span class="tag-badge tag-log">Log</span></label>
+                                        <label class="tag-checkbox"><input type="checkbox" value="Debug"> <span class="tag-badge tag-debug">Debug</span></label>
+                                    </div>
+                                    <button class="btn btn-primary" onclick="addPort()">
+                                        <i class="fa-solid fa-plus"></i> Add
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Language Section -->
+                <section id="language" class="content-section">
+                    <div class="settings-section">
+                        <h3><i class="fa-solid fa-language"></i> Language</h3>
+                        <div class="config-item">
+                            <label>Display Language</label>
+                            <div class="description">Application display language</div>
+                            <select id="languageSelect" data-modified="false">
+                                <option value="auto">Auto (System)</option>
+                                <option value="en">English</option>
+                                <option value="zh-cn">Chinese (简体中文)</option>
+                            </select>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Theme Section -->
+                <section id="theme" class="content-section">
+                    <div class="settings-section">
+                        <h3><i class="fa-solid fa-palette"></i> Theme</h3>
+                        <div class="config-item">
+                            <label>Theme Mode</label>
+                            <select id="themeSelect" data-modified="false">
+                                <option value="auto">Auto</option>
+                                <option value="dark">Dark</option>
+                                <option value="light">Light</option>
+                            </select>
+                        </div>
+                        <div class="config-item">
+                            <label>Accent Color</label>
+                            <select id="accentColorSelect" data-modified="false">
+                                <option value="blue">Blue</option>
+                                <option value="green">Green</option>
+                                <option value="purple">Purple</option>
+                                <option value="orange">Orange</option>
+                            </select>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Config File Section -->
+                <section id="config" class="content-section">
+                    <div class="settings-section">
+                        <h3><i class="fa-solid fa-file-code"></i> Config File</h3>
+                        <div class="config-item">
+                            <label>Configuration File Location</label>
+                            <div class="description">dove.json stores all settings</div>
+                            <div class="config-file-path" id="configFilePath">Loading...</div>
+                            <button class="btn btn-secondary" onclick="openConfigFile()">
+                                <i class="fa-solid fa-external-link-alt"></i> Open in Editor
+                            </button>
+                        </div>
+                    </div>
+                </section>
+            </div>
+        </main>
+    </div>
+    <script src="settings-adapter.js"></script>
+</body>
+</html>

@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Search</title>
+    <link rel="stylesheet" href="../style.css">
+    <link rel="stylesheet" href="../assets/fontawesome/all.min.css">
+</head>
+<body>
+    <div class="search-container">
+        <!-- Left Sidebar - Categories -->
+        <aside class="search-sidebar">
+            <div class="sidebar-header">
+                <h1><i class="fa-solid fa-search"></i> Search</h1>
+                <button class="settings-toggle" id="settingsToggle" title="Settings">
+                    <i class="fa-solid fa-cog"></i>
+                </button>
+            </div>
+            <nav class="category-nav" id="categoryNav">
+                <!-- Categories will be populated by JavaScript -->
+            </nav>
+            <div class="sidebar-footer collapsed" id="sidebarFooter">
+                <div class="config-item">
+                    <label>Search Scope</label>
+                    <select id="searchScope">
+                        <option value="global">Global</option>
+                        <option value="workspace">Workspace</option>
+                    </select>
+                </div>
+                <div class="config-item">
+                    <label>Max Results</label>
+                    <select id="maxResults">
+                        <option value="500" selected>500</option>
+                        <option value="1000">1000</option>
+                        <option value="5000">5000</option>
+                        <option value="10000">10000</option>
+                    </select>
+                </div>
+                <div class="config-item">
+                    <label>Everything Port</label>
+                    <input type="number" id="searchPort" value="8080" min="1" max="65535">
+                    <div class="connection-status" id="connectionStatus"></div>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Right Content Area -->
+        <main class="search-content">
+            <!-- Search Header -->
+            <div class="search-header">
+                <div class="search-input-wrapper">
+                    <i class="fa-solid fa-search"></i>
+                    <input type="text" id="searchInput" placeholder="Search files..." autocomplete="off">
+                    <button class="clear-btn" id="clearBtn">
+                        <i class="fa-solid fa-times"></i>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Search Status -->
+            <div class="search-status" id="searchStatus" style="display: none;">
+                <span id="statusText"></span>
+            </div>
+
+            <!-- Search Results -->
+            <div class="search-results" id="searchResults">
+                <div class="empty-state" id="emptyState">
+                    <i class="fa-solid fa-search"></i>
+                    <div class="title">Search Files</div>
+                    <div class="description">Enter a keyword to search files using Everything</div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Context Menu -->
+    <div class="context-menu" id="contextMenu">
+        <div class="context-menu-item" id="ctxRevealInExplorer">
+            <i class="fa-solid fa-folder-open"></i>
+            <span>Reveal in Explorer</span>
+        </div>
+        <div class="context-menu-item" id="ctxCopyPath">
+            <i class="fa-solid fa-copy"></i>
+            <span>Copy Path</span>
+        </div>
+    </div>
+</body>
+</html>
