@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark" data-accent="blue">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dove GUI</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="assets/fontawesome/all.min.css">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Sidebar Navigation -->
+        <nav class="sidebar-nav">
+            <div class="nav-header">
+                <h1><i class="fa-solid fa-dove"></i> Dove GUI</h1>
+            </div>
+            <div class="nav-items">
+                <a href="#" class="nav-item active" data-page="welcome">
+                    <i class="fa-solid fa-home"></i>
+                    <span>Welcome</span>
+                </a>
+                <a href="#" class="nav-item" data-page="settings">
+                    <i class="fa-solid fa-gear"></i>
+                    <span>Settings</span>
+                </a>
+                <a href="#" class="nav-item" data-page="search">
+                    <i class="fa-solid fa-search"></i>
+                    <span>Search</span>
+                </a>
+                <a href="#" class="nav-item" data-page="logViewer">
+                    <i class="fa-solid fa-file-text"></i>
+                    <span>Log Viewer</span>
+                </a>
+            </div>
+            <div class="nav-footer">
+                <div class="version-info">v0.2.6</div>
+            </div>
+        </nav>
+
+        <!-- Content Area -->
+        <main class="content-area" id="contentArea">
+            <!-- Content loaded dynamically -->
+            <div id="pageContainer" class="page-container"></div>
+        </main>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>

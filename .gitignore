@@ -8,3 +8,5 @@ tools/ecflashtool/*
 tools/pacdownload/*
 quectel_build/
 node_modules
+gui/node_modules/
+gui/dist/
