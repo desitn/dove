@@ -297,7 +297,7 @@ export function getProjectRoot(): string {
 
 /**
  * Find workspace path
- * Priority: 1. Config file workspacePath 2. Config file firmwarePath parent 3. Current directory search
+ * Priority: 1. Config file workspacePath 2. Config file firmwarePath parent 3. dove.json directory
  */
 export function findWorkspacePath(): string | null {
   // First, try to get workspace path from config file
@@ -305,7 +305,13 @@ export function findWorkspacePath(): string | null {
   if (config.workspacePath && fs.existsSync(config.workspacePath)) {
     return config.workspacePath;
   }
-  
+
+  // Second, use the directory containing dove.json as workspace
+  const configPath = findConfigPath();
+  if (configPath) {
+    return path.dirname(configPath);
+  }
+
   return null;
 }
 
@@ -489,34 +495,41 @@ export function determineFirmwareType(fileOrPath: string): FirmwareTypeResult {
 }
 
 /**
- * Load configuration file
+ * Find dove.json config file path
  * Priority: 1. Environment variable FIRMWARE_CLI_CONFIG 2. Current working directory
  */
-export function loadConfig(): CLIConfig {
-  // First, try to get config path from environment variable
+export function findConfigPath(): string | null {
+  // First, check environment variable
   const envConfigPath = process.env.FIRMWARE_CLI_CONFIG;
   if (envConfigPath && fs.existsSync(envConfigPath)) {
-    try {
-      const configData = fs.readFileSync(envConfigPath, 'utf8');
-      return JSON.parse(configData);
-    } catch (error) {
-      const err = error as Error;
-      console.error('Failed to parse config file from env:', err.message);
-    }
+    return envConfigPath;
   }
-  
-  // Second, try current working directory
-  const configPathWithDot = path.join(process.cwd(), 'dove.json');
-  if (fs.existsSync(configPathWithDot)) {
+
+  // Only check current working directory
+  const configPath = path.join(process.cwd(), 'dove.json');
+  if (fs.existsSync(configPath)) {
+    return configPath;
+  }
+
+  return null;
+}
+
+/**
+ * Load configuration file
+ * Priority: 1. Environment variable FIRMWARE_CLI_CONFIG 2. Search upward for dove.json
+ */
+export function loadConfig(): CLIConfig {
+  const configPath = findConfigPath();
+  if (configPath) {
     try {
-      const configData = fs.readFileSync(configPathWithDot, 'utf8');
+      const configData = fs.readFileSync(configPath, 'utf8');
       return JSON.parse(configData);
     } catch (error) {
       const err = error as Error;
       console.error('Failed to parse config file:', err.message);
     }
   }
-  
+
   return {};
 }
 
@@ -524,7 +537,11 @@ export function loadConfig(): CLIConfig {
  * Save configuration file
  */
 export function saveConfig(config: CLIConfig): void {
-  const configPath = path.join(process.cwd(), 'dove.json');
+  let configPath = findConfigPath();
+  if (!configPath) {
+    // If no config found, create in current directory
+    configPath = path.join(process.cwd(), 'dove.json');
+  }
   fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
 }
 

@@ -4,6 +4,7 @@ import { findAllFirmwares, formatSize } from './utils';
 interface ListOptions {
   json?: boolean;
   returnResult?: boolean;
+  plain?: boolean;  // Plain text format for TUI display
 }
 
 /**
@@ -16,6 +17,9 @@ export async function listFirmware(options: ListOptions = {}): Promise<FirmwareI
     const emptyResult = JSON.stringify({ firmwares: [], count: 0, recommended: null });
     if (options.returnResult) {
       return emptyResult;
+    }
+    if (options.plain) {
+      return 'No firmware files found';
     }
     if (options.json) {
       console.log(emptyResult);
@@ -58,6 +62,17 @@ export async function listFirmware(options: ListOptions = {}): Promise<FirmwareI
 
   if (options.returnResult) {
     return JSON.stringify(jsonOutput, null, 2);
+  }
+
+  // Plain format for TUI - compact single line display
+  if (options.plain) {
+    const lines: string[] = [];
+    lines.push(`Found ${firmwares.length} firmware(s):`);
+    firmwares.forEach((fw, index) => {
+      const active = fw.name === latest.name ? ' *' : '';
+      lines.push(`  ${index + 1}. ${fw.name} (${fw.type}) ${formatSize(fw.size)}${active}`);
+    });
+    return lines.join('\n');
   }
 
   if (options.json) {

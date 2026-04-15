@@ -12,16 +12,6 @@
     "dev": "ts-node src/index.ts",
     "clean": "rimraf dist"
   },
-  "keywords": [
-    "firmware",
-    "cli",
-    "flash",
-    "compile",
-    "quectel",
-    "asr",
-    "unisoc",
-    "eigen"
-  ],
   "author": "destin.zhang@quectel.com",
   "license": "MIT",
   "dependencies": {

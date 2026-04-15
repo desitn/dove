@@ -204,12 +204,10 @@ export interface FirmwareTypeResult {
 export interface SerialPortInfo {
   path: string;
   manufacturer: string;
-  serialNumber: string;
-  pnpId: string;
-  locationId: string;
-  vendorId: string;
-  productId: string;
+  friendlyName: string;
   fullDescription: string;
+  tags?: string[];  // User-defined tags from dove.json
+  isActive?: boolean;  // Is this port active in config
 }
 
 /**

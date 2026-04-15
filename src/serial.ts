@@ -12,7 +12,7 @@ import type {
   MonitorResult,
   PlatformSerialConfig
 } from './types';
-import { loadToolsConfig } from './utils';
+import { loadToolsConfig, loadConfig } from './utils';
 
 interface PortInfo {
   path: string;
@@ -32,20 +32,17 @@ export async function listSerialPorts(): Promise<SerialPortInfo[]> {
   try {
     const ports = await SerialPort.list();
     return ports.map((port: PortInfo) => {
+      const friendlyName = (port as any).friendlyName || port.path;
       const fullDesc = [
         port.pnpId || '',
         port.manufacturer || '',
-        port.friendlyName || ''
+        friendlyName
       ].join(' ').trim();
-      
+
       return {
         path: port.path,
         manufacturer: port.manufacturer || 'Unknown',
-        serialNumber: port.serialNumber || 'N/A',
-        pnpId: port.pnpId || 'N/A',
-        locationId: port.locationId || 'N/A',
-        vendorId: port.vendorId ? `0x${port.vendorId}` : 'N/A',
-        productId: port.productId ? `0x${port.productId}` : 'N/A',
+        friendlyName: friendlyName,
         fullDescription: fullDesc
       };
     });
@@ -412,33 +409,60 @@ export async function enterDownloadMode(
 /**
  * Show serial port list
  */
-export async function showSerialList(options: { json?: boolean } = {}): Promise<SerialPortInfo[] | void> {
+export async function showSerialList(options: { json?: boolean; plain?: boolean } = {}): Promise<SerialPortInfo[] | string> {
   const ports = await listSerialPorts();
 
+  // Load user-defined tags from dove.json
+  const config = loadConfig() as any || {};
+  const comPorts = config.comPorts || [];
+
+  // Merge tags into port info
+  const portsWithTags = ports.map(port => {
+    const portConfig = comPorts.find((p: any) => p.port === port.path);
+    return {
+      ...port,
+      tags: portConfig?.tags || [],
+      isActive: portConfig?.isActive || false
+    };
+  });
+
   if (options.json) {
-    console.log(JSON.stringify({ ports, count: ports.length }, null, 2));
-    return ports;
+    console.log(JSON.stringify({ ports: portsWithTags, count: portsWithTags.length }, null, 2));
+    return portsWithTags;
+  }
+
+  // Plain format for TUI - show friendly name with tags
+  if (options.plain) {
+    if (portsWithTags.length === 0) {
+      return 'No serial ports found';
+    }
+    const lines: string[] = [];
+    lines.push(`Found ${portsWithTags.length} port(s):`);
+    portsWithTags.forEach((port, index) => {
+      const tags = port.tags && port.tags.length > 0 ? ` [${port.tags.join(', ')}]` : '';
+      lines.push(`  ${index + 1}. ${port.friendlyName}${tags}`);
+    });
+    return lines.join('\n');
   }
 
   console.log('Serial Port List');
   console.log('='.repeat(70));
 
-  if (ports.length === 0) {
+  if (portsWithTags.length === 0) {
     console.log('No serial ports found');
-    return;
+    return portsWithTags;
   }
 
-  console.log(`Found ${ports.length} serial port(s):\n`);
+  console.log(`Found ${portsWithTags.length} serial port(s):\n`);
 
-  ports.forEach((port, index) => {
-    console.log(`${index + 1}. ${port.path}`);
-    console.log(`   Manufacturer: ${port.manufacturer}`);
-    console.log(`   VID: ${port.vendorId}, PID: ${port.productId}`);
-    console.log(`   Description: ${port.fullDescription.substring(0, 100)}`);
+  portsWithTags.forEach((port, index) => {
+    const tags = port.tags && port.tags.length > 0 ? ` [${port.tags.join(', ')}]` : '';
+    console.log(`${index + 1}. ${port.path}${tags}`);
+    console.log(`   Description: ${port.friendlyName}`);
     console.log('-'.repeat(70));
   });
 
-  return ports;
+  return portsWithTags;
 }
 
 /**
