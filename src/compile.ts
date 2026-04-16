@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
-import { findWorkspacePath, loadConfig, saveConfig, isWindows, executeCommand, getGlobalPaths } from './utils';
+import { spawn } from 'child_process';
+import { findWorkspacePath, loadConfig, saveConfig, isWindows, getGlobalPaths } from './utils';
 
 /**
  * Build command interface
@@ -138,10 +139,11 @@ export async function listBuildCommands(): Promise<void> {
 }
 
 /**
- * Execute build with PATH injection
+ * Execute build using spawn with inherit (subprocess mode)
+ * PATH is NOT injected - use system environment directly
  */
 async function executeBuild(workspacePath: string, buildCommand: string, bashPath: string | undefined): Promise<void> {
-  // Load global config for Git Bash path
+  // Load global config for Git Bash path (only used for .sh scripts)
   const globalPaths = getGlobalPaths();
   let gitBashPath = globalPaths?.gitBash || bashPath;
 
@@ -150,67 +152,136 @@ async function executeBuild(workspacePath: string, buildCommand: string, bashPat
     const bashExe = path.join(path.dirname(gitBashPath), 'bin', 'bash.exe');
     if (fs.existsSync(bashExe)) {
       gitBashPath = bashExe;
-      console.log(`Using CLI bash: ${gitBashPath} (instead of git-bash.exe)`);
+      console.log(`Using CLI bash: ${gitBashPath}`);
     }
   }
 
-  // Get bin directory for PATH injection
-  const gitBashBinDir = gitBashPath ? path.dirname(gitBashPath) : null;
-
-  // Build environment with PATH injection
-  const env = gitBashBinDir ? {
-    ...process.env,
-    PATH: isWindows()
-      ? `${gitBashBinDir};${process.env.PATH}`
-      : `${gitBashBinDir}:${process.env.PATH}`
-  } : process.env;
-
-  let taskCmd: string;
-  let args: string[];
-
-  // Check script type: .sh for Git Bash, .ps1 for PowerShell
-  // Match extension followed by space or end of string to handle cases like "build.sh -app"
+  // Check script type
   const isBash = /\.sh(\s|$)/i.test(buildCommand);
   const isPowerShell = /\.ps1(\s|$)/i.test(buildCommand);
+
+  // Build spawn arguments
+  let spawnCmd: string;
+  let spawnArgs: string[];
 
   if (isWindows()) {
     if (isBash) {
       if (!gitBashPath || !fs.existsSync(gitBashPath)) {
         throw new Error('Shell script requires Git Bash, please set paths.gitBash in global.json or buildGitBashPath in dove.json');
       }
-      // Quote path if it contains spaces
-      taskCmd = gitBashPath.includes(' ') ? `"${gitBashPath}"` : gitBashPath;
-      args = ['-c', `./${buildCommand}`];
       console.log(`Using Git Bash: ${gitBashPath}`);
-      console.log(`PATH injected: ${gitBashBinDir}`);
+      spawnCmd = gitBashPath;
+      spawnArgs = ['-c', `./${buildCommand}`];
     } else if (isPowerShell) {
-      taskCmd = 'powershell.exe';
-      args = ['-ExecutionPolicy', 'Bypass', '-File', buildCommand];
-      console.log('Using PowerShell to execute .ps1 script');
+      console.log('Using PowerShell');
+      spawnCmd = 'powershell.exe';
+      spawnArgs = ['-ExecutionPolicy', 'Bypass', '-File', buildCommand];
     } else {
-      taskCmd = 'cmd';
-      args = ['/c', `${buildCommand}`];
+      // Batch/CMD command - run via cmd.exe
+      spawnCmd = 'cmd.exe';
+      spawnArgs = ['/c', buildCommand];
     }
   } else {
-    taskCmd = '/bin/bash';
-    args = ['-c', `${buildCommand}`];
+    // Linux/Mac
+    spawnCmd = '/bin/bash';
+    spawnArgs = ['-c', buildCommand];
   }
 
-  console.log(`\nExecuting command: ${taskCmd} ${args.join(' ')}`);
+  console.log(`\nExecuting: ${spawnCmd} ${spawnArgs.join(' ')}`);
   console.log('='.repeat(50));
 
-  try {
-    // When shell:true, pass quoted command as single string
-    const fullCmd = args.length > 0 ? `${taskCmd} ${args.join(' ')}` : taskCmd;
-    await executeCommand(fullCmd, [], {
+  // Use spawn with stdio: 'inherit' for real-time terminal output
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn(spawnCmd, spawnArgs, {
       cwd: workspacePath,
-      shell: true,
-      env: env
+      stdio: 'inherit',  // Direct terminal I/O
+      shell: false
     });
-  } catch (error) {
-    const err = error as Error;
-    throw new Error(`Build command execution failed: ${err.message}`);
+
+    child.on('close', (code) => {
+      if (code === 0) {
+        resolve();
+      } else {
+        reject(new Error(`Build failed with exit code ${code}`));
+      }
+    });
+
+    child.on('error', (err) => {
+      reject(new Error(`Build execution error: ${err.message}`));
+    });
+  });
+}
+
+/**
+ * Execute build in new terminal window (reserved, not currently used)
+ * This function opens a separate cmd window for build output.
+ * Exported for potential future use.
+ */
+export async function executeBuildInNewWindow(workspacePath: string, buildCommand: string, bashPath: string | undefined): Promise<void> {
+  // Load global config for Git Bash path (only used for .sh scripts)
+  const globalPaths = getGlobalPaths();
+  let gitBashPath = globalPaths?.gitBash || bashPath;
+
+  // Normalize: if path ends with git-bash.exe, use bin/bash.exe instead (CLI version)
+  if (gitBashPath && gitBashPath.toLowerCase().endsWith('git-bash.exe')) {
+    const bashExe = path.join(path.dirname(gitBashPath), 'bin', 'bash.exe');
+    if (fs.existsSync(bashExe)) {
+      gitBashPath = bashExe;
+    }
   }
+
+  // Check script type
+  const isBash = /\.sh(\s|$)/i.test(buildCommand);
+  const isPowerShell = /\.ps1(\s|$)/i.test(buildCommand);
+
+  // Build command to run
+  let commandToRun: string;
+
+  if (isWindows()) {
+    if (isBash) {
+      if (!gitBashPath || !fs.existsSync(gitBashPath)) {
+        throw new Error('Shell script requires Git Bash');
+      }
+      commandToRun = `"${gitBashPath}" -c "./${buildCommand}"`;
+    } else if (isPowerShell) {
+      commandToRun = `powershell.exe -ExecutionPolicy Bypass -File "${buildCommand}"`;
+    } else {
+      commandToRun = buildCommand;
+    }
+  } else {
+    commandToRun = `/bin/bash -c "${buildCommand}"`;
+  }
+
+  // Write temp batch file in workspace .dove directory
+  const doveDir = path.join(workspacePath, '.dove');
+  if (!fs.existsSync(doveDir)) {
+    fs.mkdirSync(doveDir, { recursive: true });
+  }
+  const tempBat = path.join(doveDir, 'build_temp.bat');
+
+  // Batch content - NO PATH injection
+  const batContent = `@echo off
+cd /d "${workspacePath}"
+${commandToRun}
+echo.
+echo Build completed. You can close this window.
+`;
+  fs.writeFileSync(tempBat, batContent, 'utf8');
+
+  // Execute in new window using start command
+  const winTempBat = tempBat.replace(/\//g, '\\');
+  spawn('cmd.exe', ['/c', `start "Dove Build" cmd.exe /k "${winTempBat}"`], {
+    detached: true,
+    stdio: 'ignore',
+    shell: true
+  });
+
+  // Cleanup after 1 minute
+  setTimeout(() => {
+    try { fs.unlinkSync(tempBat); } catch { /* ignore */ }
+  }, 60000);
+
+  console.log('Build started in new terminal window.');
 }
 
 /**

@@ -1,0 +1,38 @@
+{
+  "workspacePath": "F:\\vscode-extension\\quick-dove\\dove",
+  "firmwarePath": "",
+  "buildCommands": [],
+  "comPorts": [
+    {
+      "port": "COM177",
+      "tag": "Invalid"
+    },
+    {
+      "port": "COM175",
+      "tag": "Invalid"
+    },
+    {
+      "port": "COM176",
+      "tag": "DBG"
+    },
+    {
+      "port": "COM174",
+      "tag": "AT"
+    },
+    {
+      "port": "COM1",
+      "tag": "Invalid"
+    },
+    {
+      "port": "COM24",
+      "tag": "AT"
+    },
+    {
+      "port": "COM21",
+      "tag": "Invalid"
+    }
+  ],
+  "theme": {
+    "color": "yellow"
+  }
+}

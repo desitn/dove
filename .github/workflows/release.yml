@@ -35,9 +35,9 @@ jobs:
           Copy-Item dove.exe release/
           Copy-Item -Recurse tools release/
           Copy-Item -Recurse skill release/
+          Copy-Item env/install.ps1 release/
+          Copy-Item env/uninstall.ps1 release/
           Copy-Item README.md release/
-          Copy-Item install.ps1 release/
-          Copy-Item uninstall.ps1 release/
 
       - name: Create ZIP
         shell: pwsh

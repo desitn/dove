@@ -5,7 +5,8 @@ import readline from 'readline';
 import iconvLite from 'iconv-lite';
 import type {
   PlatformConfig,
-  ProgressPatterns
+  ProgressPatterns,
+  FlashProgressCallback
 } from './types';
 import {
   getToolPath,
@@ -15,8 +16,7 @@ import {
   isWindows,
   determineFirmwareType,
   killProcessTree,
-  executeCommand,
-  findWorkspacePath
+  executeCommand
 } from './utils';
 import { enterDownloadMode, findDownloadPort } from './serial';
 
@@ -217,70 +217,93 @@ function createProgressBar(percentage: number, width: number = 20): string {
 
 /**
  * Execute flash command
+ * @param onProgress - Optional callback for TUI progress updates
  */
-async function executeFlash(toolPath: string, toolType: string, firmwareFile: string, progressMode?: string | null): Promise<void> {
+export async function executeFlash(
+  toolPath: string,
+  toolType: string,
+  firmwareFile: string,
+  progressMode?: string | null,
+  onProgress?: FlashProgressCallback
+): Promise<void> {
   return new Promise<void>(async (resolve, reject) => {
     let command: string;
     let args: string[];
-    
+
     const settings = getGlobalSettings();
     const port = settings.defaultPort || 'auto';
-    
+
     if (isWindows()) {
       command = 'cmd';
-      
+
       const toolArgs = buildToolArgs(toolType, 'flash', {
         firmwarePath: firmwareFile,
         port: port
       });
-      
+
       const cmdStr = `"${toolPath}" ${toolArgs.join(' ')}`;
       args = ['/c', cmdStr];
     } else {
       command = toolPath;
-      
+
       args = buildToolArgs(toolType, 'flash', {
         firmwarePath: firmwareFile,
         port: port
       });
     }
-    
-    console.log(`Executing command: ${command} ${args.join(' ')}`);
-    
-    const child = spawn(command, args, { 
+
+    // Log command execution
+    if (onProgress) {
+      onProgress(0, 'idle', `Executing: ${command} ${args.join(' ')}`);
+    } else {
+      console.log(`Executing command: ${command} ${args.join(' ')}`);
+    }
+
+    const child = spawn(command, args, {
       shell: true,
       stdio: ['ignore', 'pipe', 'pipe']
     });
     let downloadComplete = false;
-    
+
     const timeout = setTimeout(() => {
       if (!downloadComplete) {
-        console.log('Timeout, terminating download process');
+        if (onProgress) {
+          onProgress(0, 'error', 'Timeout, terminating download process');
+        } else {
+          console.log('Timeout, terminating download process');
+        }
         killProcessTree(child, 'SIGKILL');
       }
     }, 30000);
-    
-    const workspacePath = findWorkspacePath() || process.cwd();
-    const logFile = path.join(workspacePath, 'frimware-cli-tool.log');
+
+    // Log file path: .dove/flash/flash.log
+    const cwd = process.cwd();
+    const doveFlashDir = path.join(cwd, '.dove', 'flash');
+    const logFile = path.join(doveFlashDir, 'flash.log');
+
+    // Create .dove/flash directory if not exists
+    if (!fs.existsSync(doveFlashDir)) {
+      fs.mkdirSync(doveFlashDir, { recursive: true });
+    }
     const logStream = fs.createWriteStream(logFile, { flags: 'w' });
-    
+
     const hasStartedRef: RefObject = { value: false };
-    
+
     // Get output configuration
     const config = loadToolsConfig();
     const outputConfig = config.outputConfig || { progressMode: 'single-line', verbose: false, timestamp: false };
-    
+
     // Override progressMode if specified in options
     if (progressMode) {
       outputConfig.progressMode = progressMode as 'single-line' | 'multi-line' | 'json';
     }
-    
+
     // Progress tracking - stage-based pseudo progress
     let currentProgress = 0;
     let currentStatus = 'idle';
     let progressInterval: NodeJS.Timeout | null = null;
     let stageStartTime = Date.now();
-    
+
     // State machine: define state order for linear progression only
     const stateOrder: Record<string, number> = {
       'idle': 0,
@@ -289,33 +312,23 @@ async function executeFlash(toolPath: string, toolType: string, firmwareFile: st
       'completed': 3,
       'error': 99
     };
-    
+
     // Check if state transition is allowed (only forward progression)
     const canTransitionTo = (newStatus: string): boolean => {
       const currentOrder = stateOrder[currentStatus] ?? -1;
       const newOrder = stateOrder[newStatus] ?? -1;
       return newOrder > currentOrder;
     };
-    
-    // Auto-start progress when flash begins (don't wait for tool output)
-    // This ensures progress bar shows immediately
-    setTimeout(() => {
-      if (!hasStartedRef.value && !downloadComplete) {
-        hasStartedRef.value = true;
-        currentStatus = 'started';
-        startStageProgress('started');
-      }
-    }, 100);
-    
+
     // Get download duration from platform config, default to 30 seconds
     const platformKeyForDuration = Object.keys(config.platforms || {}).find(
       key => config.platforms[key].type === toolType
     );
-    const platformDuration = platformKeyForDuration 
-      ? config.platforms[platformKeyForDuration].downloadDuration 
+    const platformDuration = platformKeyForDuration
+      ? config.platforms[platformKeyForDuration].downloadDuration
       : undefined;
     const downloadDuration = platformDuration || 30000; // Default 30 seconds
-    console.log(`Download expect duration: ${downloadDuration}`);
+
     // Stage configuration: each stage has a fixed progress range
     const stageConfig: Record<string, { min: number; max: number; duration: number }> = {
       'started': { min: 0, max: 5, duration: 5000 },        // 0-5% in 5 seconds
@@ -323,64 +336,79 @@ async function executeFlash(toolPath: string, toolType: string, firmwareFile: st
       'completed': { min: 95, max: 100, duration: 3000 },   // 95-100% in 3 seconds
       'error': { min: 0, max: 0, duration: 0 }
     };
-    
+
     // Start progress simulation for current stage
     const startStageProgress = (stage: string) => {
       if (progressInterval) {
         clearInterval(progressInterval);
       }
-      
-      const config = stageConfig[stage];
-      if (!config || config.duration === 0) {
+
+      const cfg = stageConfig[stage];
+      if (!cfg || cfg.duration === 0) {
         return;
       }
-      
+
       stageStartTime = Date.now();
-      currentProgress = config.min;
-      
+      currentProgress = cfg.min;
+
       // Update immediately
-      outputProgress(currentProgress, currentStatus, outputConfig.progressMode);
-      
+      outputProgress(currentProgress, currentStatus);
+
       // Start interval to update progress within the stage
       progressInterval = setInterval(() => {
         if (downloadComplete) {
           return;
         }
-        
+
         const elapsed = Date.now() - stageStartTime;
-        const progress = Math.min(1, elapsed / config.duration);
-        const newProgress = config.min + (config.max - config.min) * progress;
-        
+        const progress = Math.min(1, elapsed / cfg.duration);
+        const newProgress = cfg.min + (cfg.max - cfg.min) * progress;
+
         if (newProgress > currentProgress) {
           currentProgress = newProgress;
-          outputProgress(currentProgress, currentStatus, outputConfig.progressMode);
+          outputProgress(currentProgress, currentStatus);
         }
       }, 200); // Update every 200ms for smooth animation
     };
-    
-    // Output progress based on mode
-    const outputProgress = (progress: number, status: string, mode: string) => {
+
+    // Auto-start progress when flash begins
+    setTimeout(() => {
+      if (!hasStartedRef.value && !downloadComplete) {
+        hasStartedRef.value = true;
+        currentStatus = 'started';
+        startStageProgress('started');
+      }
+    }, 100);
+
+    // Output progress - use callback for TUI, console for CLI
+    const outputProgress = (progress: number, status: string) => {
       const progressInt = Math.floor(progress);
-      
-      if (mode === 'json') {
-        const jsonOutput = {
-          progress: progressInt,
-          status: status,
-          message: getStatusText(status)
-        };
-        console.log(JSON.stringify(jsonOutput));
-      } else if (mode === 'single-line') {
-        const progressBar = createProgressBar(progressInt);
-        const statusText = getStatusText(status);
-        process.stdout.write(`\r${progressBar} ${progressInt}% ${statusText}`);
+
+      if (onProgress) {
+        // TUI mode: use callback
+        onProgress(progressInt, status);
       } else {
-        // multi-line mode
-        const statusText = getStatusText(status);
-        const timestamp = outputConfig.timestamp ? `[${new Date().toISOString()}] ` : '';
-        console.log(`${timestamp}Progress: ${progressInt}% ${statusText}`);
+        // CLI mode: console output
+        if (outputConfig.progressMode === 'json') {
+          const jsonOutput = {
+            progress: progressInt,
+            status: status,
+            message: getStatusText(status)
+          };
+          console.log(JSON.stringify(jsonOutput));
+        } else if (outputConfig.progressMode === 'single-line') {
+          const progressBar = createProgressBar(progressInt);
+          const statusText = getStatusText(status);
+          process.stdout.write(`\r${progressBar} ${progressInt}% ${statusText}`);
+        } else {
+          // multi-line mode
+          const statusText = getStatusText(status);
+          const timestamp = outputConfig.timestamp ? `[${new Date().toISOString()}] ` : '';
+          console.log(`${timestamp}Progress: ${progressInt}% ${statusText}`);
+        }
       }
     };
-    
+
     // Get status text
     const getStatusText = (status: string): string => {
       switch (status) {
@@ -391,12 +419,12 @@ async function executeFlash(toolPath: string, toolType: string, firmwareFile: st
         default: return '';
       }
     };
-    
+
     const stdoutRl = readline.createInterface({
       input: child.stdout,
       crlfDelay: Infinity
     });
-    
+
     stdoutRl.on('line', (line: string) => {
       let output: string;
       if (isWindows()) {
@@ -404,32 +432,36 @@ async function executeFlash(toolPath: string, toolType: string, firmwareFile: st
       } else {
         output = line;
       }
-      
+
       const timestamp = new Date().toISOString();
       logStream.write(`[${timestamp}] ${output}\n`);
 
+      // Send log line to callback for TUI
+      if (onProgress) {
+        onProgress(Math.floor(currentProgress), currentStatus, output);
+      }
+
       // Parse output to determine status
       const progress = formatDownloadProgress(output, toolType, hasStartedRef);
-      
+
       // Handle status detection and timeout clearing
       if (progress && !downloadComplete) {
         const statusMatch = progress.match(/\[(\w+)\]/);
         if (statusMatch) {
           const detectedStatus = statusMatch[1].toLowerCase();
-          
+
           // Clear timeout when download starts (started or downloading)
-          // This prevents false timeout during long downloads
           if (detectedStatus === 'started' || detectedStatus === 'downloading') {
             clearTimeout(timeout);
           }
-          
+
           // Mark as complete only when finished or error
           if (detectedStatus === 'completed' || detectedStatus === 'error') {
             downloadComplete = true;
           }
         }
       }
-      
+
       // Update status based on output (with state machine - only forward progression)
       if (progress) {
         const statusMatch = progress.match(/\[(\w+)\]/);
@@ -438,24 +470,23 @@ async function executeFlash(toolPath: string, toolType: string, firmwareFile: st
           // Only allow state transition if it's forward progression
           if (newStatus !== currentStatus && canTransitionTo(newStatus)) {
             currentStatus = newStatus;
-            
             // Start progress simulation for the new stage
             startStageProgress(currentStatus);
           }
         }
       }
-      
-      // Verbose output
-      if (outputConfig.verbose) {
+
+      // Verbose output (CLI only)
+      if (!onProgress && outputConfig.verbose) {
         console.log(output);
       }
     });
-    
+
     const stderrRl = readline.createInterface({
       input: child.stderr,
       crlfDelay: Infinity
     });
-    
+
     stderrRl.on('line', (line: string) => {
       let errorOutput: string;
       if (isWindows()) {
@@ -463,46 +494,67 @@ async function executeFlash(toolPath: string, toolType: string, firmwareFile: st
       } else {
         errorOutput = line;
       }
-      
+
       const timestamp = new Date().toISOString();
       logStream.write(`[${timestamp}] [STDERR] ${errorOutput}\n`);
-      process.stderr.write(errorOutput + '\n');
+
+      // Send error log to callback for TUI
+      if (onProgress) {
+        onProgress(Math.floor(currentProgress), currentStatus, `[ERR] ${errorOutput}`);
+      } else {
+        process.stderr.write(errorOutput + '\n');
+      }
     });
-    
+
     child.on('close', (code: number | null) => {
       clearTimeout(timeout);
-      
+
       // Stop progress simulation
       if (progressInterval) {
         clearInterval(progressInterval);
       }
-      
+
       // Set final progress
       if (code === 0) {
         currentProgress = 100;
         currentStatus = 'completed';
-        outputProgress(100, 'completed', outputConfig.progressMode);
-        console.log('\nDownload process exited successfully');
+        outputProgress(100, 'completed');
+        if (onProgress) {
+          onProgress(100, 'completed', `Download completed successfully. Log: ${logFile}`);
+        } else {
+          console.log('\nDownload completed successfully');
+          console.log(`Log saved to: ${logFile}`);
+        }
         resolve();
       } else {
         currentStatus = 'error';
-        outputProgress(currentProgress, 'error', outputConfig.progressMode);
+        outputProgress(currentProgress, 'error');
+        if (onProgress) {
+          onProgress(Math.floor(currentProgress), 'error', `Download failed, exit code: ${code}. Log: ${logFile}`);
+        } else {
+          console.log(`\nLog saved to: ${logFile}`);
+        }
         reject(new Error(`Download process failed, exit code: ${code}`));
       }
-      
+
       logStream.end(`\n[Process exited, exit code: ${code}]\n`);
     });
-    
+
     child.on('error', (error: Error) => {
       clearTimeout(timeout);
-      
+
       // Stop progress simulation
       if (progressInterval) {
         clearInterval(progressInterval);
       }
-      
+
       currentStatus = 'error';
-      outputProgress(currentProgress, 'error', outputConfig.progressMode);
+      outputProgress(currentProgress, 'error');
+      if (onProgress) {
+        onProgress(Math.floor(currentProgress), 'error', `Process error: ${error.message}`);
+      } else {
+        console.log(`\nLog saved to: ${logFile}`);
+      }
       reject(new Error(`Failed to start download process: ${error.message}`));
     });
   });

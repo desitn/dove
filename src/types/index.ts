@@ -151,18 +151,15 @@ export interface BuildCommandItem {
 /**
  * Port tag types for AI recognition
  */
-export type PortTag = 'AT' | 'DBG' | 'invalid';
+export type PortTag = 'AT' | 'DBG' | 'Invalid';
 
 /**
- * COM port configuration (supports both new and legacy format)
- * New format: { port, tag }
- * Legacy format (VS Code extension): { port, tags: [], isActive }
+ * COM port configuration
+ * Each port can only have one tag
  */
 export interface ComPortConfig {
   port: string;
-  tag?: PortTag;           // New format: single tag
-  tags?: PortTag[];        // Legacy format: array of tags
-  isActive?: boolean;      // Legacy format: active flag
+  tag: PortTag;             // Single tag: AT, DBG, or Invalid
   description?: string;
 }
 
@@ -194,6 +191,11 @@ export interface FirmwareTypeResult {
 }
 
 /**
+ * Flash progress callback for TUI integration
+ */
+export type FlashProgressCallback = (progress: number, status: string, logLine?: string) => void;
+
+/**
  * Monitor options for serial port
  */
   export interface MonitorOptions {
@@ -214,7 +216,7 @@ export interface FirmwareTypeResult {
   }
 
 /**
- * Serial port information
+ * Serial port information (full)
  */
 export interface SerialPortInfo {
   path: string;
@@ -222,6 +224,15 @@ export interface SerialPortInfo {
   friendlyName: string;
   fullDescription: string;
   tag?: PortTag | null;  // User-defined tag from dove.json
+}
+
+/**
+ * Port list output (simplified for CLI)
+ */
+export interface PortListInfo {
+  path: string;
+  tag: PortTag | null;
+  friendlyName: string;
 }
 
 /**

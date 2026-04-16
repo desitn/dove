@@ -5,6 +5,7 @@ import fs from 'fs';
 import type { Writable } from 'stream';
 import type {
   SerialPortInfo,
+  PortListInfo,
   DownloadPortInfo,
   ATCommandResult,
   EnterDownloadModeResult,
@@ -17,12 +18,10 @@ import type {
 import { loadToolsConfig, loadConfig } from './utils';
 
 /**
- * Get tag from port config (compatible with both new and legacy format)
+ * Get tag from port config
  */
 function getPortTag(portConfig: ComPortConfig): PortTag | null {
-  if (portConfig.tag) return portConfig.tag;
-  if (portConfig.tags && portConfig.tags.length > 0) return portConfig.tags[0] as PortTag;
-  return null;
+  return portConfig.tag || null;
 }
 
 interface PortInfo {
@@ -420,21 +419,22 @@ export async function enterDownloadMode(
 /**
  * Show serial port list
  */
-export async function showSerialList(options: { json?: boolean; plain?: boolean } = {}): Promise<SerialPortInfo[] | string> {
+export async function showSerialList(options: { json?: boolean; plain?: boolean } = {}): Promise<PortListInfo[] | string> {
   const ports = await listSerialPorts();
 
   // Load user-defined tags from dove.json
   const config = loadConfig() as any || {};
   const comPorts = config.comPorts || [];
 
-  // Merge tags into port info (compatible with both formats)
+  // Merge tags into port info, then filter out Invalid ports and COM1
   const portsWithTags = ports.map(port => {
     const portConfig = comPorts.find((p: ComPortConfig) => p.port === port.path);
     return {
-      ...port,
-      tag: portConfig ? getPortTag(portConfig) : null
+      path: port.path,
+      tag: portConfig ? getPortTag(portConfig) : null,
+      friendlyName: port.friendlyName
     };
-  });
+  }).filter(port => port.tag !== 'Invalid' && port.path !== 'COM1');
 
   if (options.json) {
     console.log(JSON.stringify({ ports: portsWithTags, count: portsWithTags.length }, null, 2));

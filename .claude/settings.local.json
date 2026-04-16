@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git config:*)",
+      "Bash(npm run:*)",
+      "Read(//f/vscode-extension/quick-dove/**)",
+      "Bash(ls -la .dove/)",
+      "Bash(node dove/dist/index.js tui)",
+      "Bash(rm -rf .dove)",
+      "Bash(node dove/dist/index.js help)",
+      "Bash(rm -rf .dove dove.json)",
+      "Bash(ls -la .dove)",
+      "Bash(timeout 3 ./dove.exe tui)",
+      "Bash(./dove.exe port:*)",
+      "Bash(node dove/dist/index.js build)",
+      "Bash(node dove/dist/index.js config set buildCommands \"[{\\\\\"name\\\\\":\\\\\"test\\\\\",\\\\\"command\\\\\":\\\\\"echo Hello World\\\\\",\\\\\"isActive\\\\\":true}]\")",
+      "Bash(cmd.exe /c \"F:/vscode-extension/quick-dove/.dove/build_temp.bat\")"
+    ]
+  }
+}

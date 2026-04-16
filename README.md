@@ -1,4 +1,4 @@
-# Dove - Firmware CLI Tool
+# Dove - firmware cli tool
 
 > Release a dove, deliver your firmware.
 

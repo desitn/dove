@@ -496,7 +496,10 @@ export function determineFirmwareType(fileOrPath: string): FirmwareTypeResult {
 
 /**
  * Find dove.json config file path
- * Priority: 1. Environment variable FIRMWARE_CLI_CONFIG 2. Current working directory
+ * Priority:
+ *   1. Environment variable FIRMWARE_CLI_CONFIG
+ *   2. Current working directory/dove.json
+ *   3. Current working directory/.dove/dove.json
  */
 export function findConfigPath(): string | null {
   // First, check environment variable
@@ -505,13 +508,68 @@ export function findConfigPath(): string | null {
     return envConfigPath;
   }
 
-  // Only check current working directory
-  const configPath = path.join(process.cwd(), 'dove.json');
+  const cwd = process.cwd();
+
+  // Check dove.json in current working directory
+  const configPath = path.join(cwd, 'dove.json');
   if (fs.existsSync(configPath)) {
     return configPath;
   }
 
+  // Check .dove/dove.json in current working directory
+  const doveConfigPath = path.join(cwd, '.dove', 'dove.json');
+  if (fs.existsSync(doveConfigPath)) {
+    return doveConfigPath;
+  }
+
   return null;
+}
+
+/**
+ * Get default configuration
+ */
+export function getDefaultConfig(): CLIConfig {
+  return {
+    firmwarePath: '',
+    buildCommands: [],
+    comPorts: []
+  };
+}
+
+/**
+ * Initialize workspace configuration
+ * Create .dove/dove.json if not exists
+ * @returns true if config was created, false if already exists
+ */
+export function initWorkspaceConfig(): { configPath: string; created: boolean } {
+  const existingConfigPath = findConfigPath();
+
+  if (existingConfigPath) {
+    return { configPath: existingConfigPath, created: false };
+  }
+
+  // Create .dove directory and default config
+  const cwd = process.cwd();
+  const doveDir = path.join(cwd, '.dove');
+  const newConfigPath = path.join(doveDir, 'dove.json');
+
+  // Create directory if not exists
+  if (!fs.existsSync(doveDir)) {
+    fs.mkdirSync(doveDir, { recursive: true });
+  }
+
+  // Create default config with workspacePath set to current directory
+  const defaultConfig: CLIConfig = {
+    workspacePath: cwd,
+    firmwarePath: '',
+    buildCommands: [],
+    comPorts: []
+  };
+  fs.writeFileSync(newConfigPath, JSON.stringify(defaultConfig, null, 2));
+
+  console.log(`Created workspace config: ${newConfigPath}`);
+
+  return { configPath: newConfigPath, created: true };
 }
 
 /**
@@ -610,10 +668,10 @@ export function executeCommand(
       env: options.env || process.env,
       ...options
     });
-    
+
     let stdout = '';
     let stderr = '';
-    
+
     child.stdout?.on('data', (data: Buffer) => {
       let output: string;
       if (isWindows()) {
@@ -625,11 +683,11 @@ export function executeCommand(
       if (!options.silent) {
         process.stdout.write(output);
       }
-      
+
       // Auto handle pause command
       if (options.autoPressKey !== false) {
         const lowerOutput = output.toLowerCase();
-        if (lowerOutput.includes('请按任意键继续') || 
+        if (lowerOutput.includes('请按任意键继续') ||
             lowerOutput.includes('press any key') ||
             lowerOutput.includes('pause')) {
           if (child.stdin && !child.stdin.destroyed) {

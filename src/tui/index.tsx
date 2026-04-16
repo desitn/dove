@@ -4,13 +4,12 @@
 
 import fs from 'fs';
 import { spawn } from 'child_process';
-import readline from 'readline';
-import iconvLite from 'iconv-lite';
-import { findWorkspacePath, loadConfig, saveConfig, getToolPath, buildToolArgs, getGlobalSettings, loadToolsConfig, isWindows, determineFirmwareType, killProcessTree, findConfigPath } from '../utils';
+import { loadConfig, saveConfig, getToolPath, loadToolsConfig, determineFirmwareType, findWorkspacePath, findConfigPath } from '../utils';
 import { compileFirmware } from '../compile';
 import { findAllFirmwares, formatSize } from '../utils';
-import { listSerialPorts, enterDownloadMode, findDownloadPort } from '../serial';
-import type { FirmwareInfo, SerialPortInfo, PlatformConfig, ProgressPatterns } from '../types';
+import { executeFlash } from '../flash';
+import { enterDownloadMode, findDownloadPort, listSerialPorts } from '../serial';
+import type { FirmwareInfo, SerialPortInfo, PlatformConfig } from '../types';
 
 // ============================================================
 // List Selector - Universal partial refresh for list navigation
@@ -56,20 +55,20 @@ function renderListItem(type: ListType, index: number, isSelected: boolean): str
       if (firmwareList.length === 0) return '';
       const fw = firmwareList[index];
       const recFlash = index === 0 ? COLOR_GREEN + ' *' + COLOR_RESET : '';
-      return ` ${mark} ${index + 1}. ${fw.name} (${fw.type}) ${formatSize(fw.size)}${recFlash}`;
+      return ` ${mark} ${index + 1}. ${fw.name} (${theme.primary}${fw.type}${COLOR_RESET}) ${formatSize(fw.size)}${recFlash}`;
 
     case 'ports':
       if (portList.length === 0) return '';
       const port = portList[index];
       const maxNameWidth = Math.max(35, ...portList.slice(0, 8).map(p => displayWidth(p.friendlyName)));
       const paddedName = padDisplay(port.friendlyName, maxNameWidth);
-      const tagsPort = port.tags.length > 0 ? COLOR_GREEN + '[' + port.tags.join(', ') + ']' + COLOR_RESET : COLOR_DIM + '[未标记]' + COLOR_RESET;
-      return ` ${mark} ${index + 1}. ${paddedName} ${tagsPort}`;
+      const tagStr = port.tag ? COLOR_GREEN + '[' + port.tag + ']' + COLOR_RESET : COLOR_DIM + '[未标记]' + COLOR_RESET;
+      return ` ${mark} ${index + 1}. ${paddedName} ${tagStr}`;
 
     case 'port-tag':
       const portForTag = portList[selectedPort];
       const tagItem = portTags[index];
-      const hasTag = portForTag?.tags.includes(tagItem);
+      const hasTag = portForTag?.tag === tagItem;
       const checkTag = hasTag ? COLOR_GREEN + '✓' + COLOR_RESET : ' ';
       return ` ${mark} ${index + 1}. ${tagItem} ${checkTag}`;
 
@@ -87,6 +86,10 @@ function renderListItem(type: ListType, index: number, isSelected: boolean): str
         valueStr = themeColorCode + currentTheme + COLOR_RESET;
       } else if (settingItem.type === 'action') {
         valueStr = COLOR_DIM + 'dove.json' + COLOR_RESET;
+      } else if (settingItem.type === 'path') {
+        const value = getConfigValue(config, settingItem.key, settingItem.type);
+        const pathValue = typeof value === 'string' ? value : String(value);
+        valueStr = pathValue ? COLOR_DIM + truncatePath(pathValue, 50) + COLOR_RESET : COLOR_DIM + '(will check cwd)' + COLOR_RESET;
       } else {
         const value = getConfigValue(config, settingItem.key, settingItem.type);
         valueStr = value ? COLOR_DIM + truncate(value, 30) + COLOR_RESET : COLOR_DIM + '(not set)' + COLOR_RESET;
@@ -166,7 +169,7 @@ const COLOR_RED = '\x1b[31m';
 const COLOR_YELLOW = '\x1b[33m';
 
 // State variables
-let currentView: 'main' | 'build' | 'build-add' | 'flash' | 'ports' | 'port-tag' | 'settings' | 'settings-detail' | 'settings-edit' | 'theme-select' = 'main';
+let currentView: 'main' | 'build' | 'build-add' | 'flash' | 'flash-edit' | 'ports' | 'port-tag' | 'settings' | 'settings-detail' | 'settings-edit' | 'theme-select' = 'main';
 let selectedMenu = 0;
 let outputBuffer: string[] = [];
 let isExecuting = false;
@@ -176,7 +179,7 @@ let buildCommands: any[] = [];
 let selectedBuild = 0;
 
 // Ports state
-let portList: (SerialPortInfo & { tags: string[], isActive: boolean })[] = [];
+let portList: (SerialPortInfo & { tag: string })[] = [];
 let selectedPort = 0;
 
 // Flash state
@@ -190,9 +193,10 @@ let spinnerIndex = 0;
 const spinnerChars = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
 // Menu items
-const menuItems: { label: string; action: 'build' | 'flash' | 'settings' | 'quit' }[] = [
+const menuItems: { label: string; action: 'build' | 'flash' | 'ports' | 'settings' | 'quit' }[] = [
   { label: 'Build', action: 'build' },
   { label: 'Flash', action: 'flash' },
+  { label: 'Ports', action: 'ports' },
   { label: 'Settings', action: 'settings' },
   { label: 'Quit', action: 'quit' },
 ];
@@ -201,12 +205,10 @@ const menuItems: { label: string; action: 'build' | 'flash' | 'settings' | 'quit
 const portTags = ['AT', 'DBG', 'Invalid'];
 let selectedTag = 0;
 
-// Settings items
+// Settings items (Firmware Path moved to Flash menu)
 const settingsItems = [
   { key: 'workspacePath', label: 'Workspace Path', type: 'path' },
-  { key: 'firmwarePath', label: 'Firmware Path', type: 'path' },
   { key: 'theme', label: 'Theme Color', type: 'theme' },
-  { key: 'ports', label: 'Ports', type: 'ports' },
   { key: 'openConfig', label: 'Open Config File', type: 'action' },
 ];
 let selectedSetting = 0;
@@ -254,18 +256,37 @@ async function loadPortList(): Promise<void> {
   const config = loadConfig() as any || {};
   const comPorts = config.comPorts || [];
 
+  // Tag priority: AT -> DBG -> Invalid -> null
+  const tagPriority: Record<string, number> = {
+    'AT': 1,
+    'DBG': 2,
+    'Invalid': 3
+  };
+
+  // Helper: extract COM number for sorting
+  const getComNumber = (path: string): number => {
+    const match = path.match(/COM(\d+)/i);
+    return match ? parseInt(match[1]) : 9999;
+  };
+
+  // Filter out COM1, then sort by tag priority and COM number
   portList = ports.map(port => {
     const portConfig = comPorts.find((p: any) => p.port === port.path);
     return {
       ...port,
-      tags: portConfig?.tags || [],
-      isActive: portConfig?.isActive || false
+      tag: portConfig?.tag || null
     };
-  });
+  }).filter(port => port.path !== 'COM1')
+    .sort((a, b) => {
+      const priorityA = a.tag ? tagPriority[a.tag] || 4 : 4;
+      const priorityB = b.tag ? tagPriority[b.tag] || 4 : 4;
+      if (priorityA !== priorityB) return priorityA - priorityB;
+      return getComNumber(a.path) - getComNumber(b.path);
+    });
   selectedPort = 0;
 }
 
-// Save port tag to config
+// Save port tag to config (single tag only)
 function savePortTag(portPath: string, tag: string): void {
   const config = loadConfig() as any || {};
   if (!config.comPorts) {
@@ -274,32 +295,23 @@ function savePortTag(portPath: string, tag: string): void {
 
   const existing = config.comPorts.find((p: any) => p.port === portPath);
   if (existing) {
-    if (!existing.tags.includes(tag)) {
-      existing.tags.push(tag);
-    }
+    existing.tag = tag;
   } else {
     config.comPorts.push({
       port: portPath,
-      tags: [tag],
-      isActive: false
+      tag: tag
     });
   }
 
   saveConfig(config);
 }
 
-// Remove port tag from config
-function removePortTag(portPath: string, tag: string): void {
+// Remove port tag from config (set to Invalid or remove entry)
+function removePortTag(portPath: string): void {
   const config = loadConfig() as any || {};
   if (!config.comPorts) return;
 
-  const existing = config.comPorts.find((p: any) => p.port === portPath);
-  if (existing) {
-    existing.tags = existing.tags.filter((t: string) => t !== tag);
-    if (existing.tags.length === 0) {
-      config.comPorts = config.comPorts.filter((p: any) => p.port !== portPath);
-    }
-  }
+  config.comPorts = config.comPorts.filter((p: any) => p.port !== portPath);
 
   saveConfig(config);
 }
@@ -325,6 +337,24 @@ function truncate(str: string | number, maxLen: number): string {
   if (!str) return '';
   if (str.length <= maxLen) return str;
   return str.substring(0, maxLen - 3) + '...';
+}
+
+// Helper: truncate path string (show beginning and end, omit middle)
+function truncatePath(path: string, maxLen: number): string {
+  if (!path) return '';
+  if (path.length <= maxLen) return path;
+
+  // For Windows paths, try to preserve drive letter and last folder
+  const minLen = 10; // Minimum length to show meaningful info
+  if (maxLen < minLen) return truncate(path, maxLen);
+
+  // Calculate how much to show at beginning and end
+  const ellipsis = '...';
+  const available = maxLen - ellipsis.length;
+  const frontLen = Math.ceil(available * 0.4); // 40% from start
+  const backLen = Math.floor(available * 0.6); // 60% from end
+
+  return path.substring(0, frontLen) + ellipsis + path.substring(path.length - backLen);
 }
 
 // Helper: calculate display width (Chinese chars take 2 columns)
@@ -375,218 +405,72 @@ function getFlashStatusText(status: string): string {
     case 'idle': return 'Preparing...';
     case 'started': return 'Initializing...';
     case 'downloading': return 'Downloading...';
-    case 'completed': return 'Completed!';
+    case 'completed': return 'Download OK!';
     case 'error': return 'Error!';
     default: return '';
   }
 }
 
-// Get progress patterns for platform
-function getProgressPatterns(toolType: string): ProgressPatterns {
-  const config = loadToolsConfig();
-  let platformKey: string | null = null;
-  for (const [key, platform] of Object.entries(config.platforms || {})) {
-    if (platform.type === toolType) {
-      platformKey = key;
-      break;
-    }
-  }
-  const platformConfig = platformKey ? config.platforms[platformKey] : null;
-  return platformConfig?.progressPatterns || {
-    started: ['init', 'start', 'begin'],
-    downloading: ['downloading', 'running', 'burning', 'flashing'],
-    completed: ['complete', 'finished', 'succeeded'],
-    error: ['error', 'fail', 'timeout']
-  };
-}
-
-// Flash firmware with progress updates for TUI
+// Flash firmware - reuse executeFlash from flash.ts
 async function flashFirmwareWithProgress(firmwarePath: string): Promise<void> {
-  return new Promise<void>(async (resolve, reject) => {
-    try {
-      if (!fs.existsSync(firmwarePath)) {
-        throw new Error(`Firmware file does not exist: ${firmwarePath}`);
-      }
-
-      const firmwareInfo = determineFirmwareType(firmwarePath);
-      const toolPath = getToolPath(firmwareInfo.type);
-
-      if (!fs.existsSync(toolPath)) {
-        throw new Error(`Download tool does not exist: ${toolPath}`);
-      }
-
-      const config = loadToolsConfig();
-      let platformKey: string | null = null;
-      let platformConfig: PlatformConfig | null = null;
-
-      for (const [key, platform] of Object.entries(config.platforms || {})) {
-        if (platform.type === firmwareInfo.type) {
-          platformKey = key;
-          platformConfig = platform;
-          break;
-        }
-      }
-
-      // Check download mode
-      if (platformConfig?.serial?.autoEnterDlMode) {
-        const dlPort = await findDownloadPort(platformKey);
-        if (!dlPort) {
-          await enterDownloadMode(platformKey || firmwareInfo.type, false, 2);
-        }
-      }
-
-      const settings = getGlobalSettings();
-      const port = settings.defaultPort || 'auto';
-      const toolArgs = buildToolArgs(firmwareInfo.type, 'flash', {
-        firmwarePath: firmwarePath,
-        port: port
-      });
-
-      const cmdStr = `"${toolPath}" ${toolArgs.join(' ')}`;
-      const command = 'cmd';
-      const args = ['/c', cmdStr];
-
-      flashLogBuffer.push(`Executing: ${cmdStr}`);
-      flashStatus = 'started';
-      flashProgress = 5;
-      renderScreen(); // Initial render
-
-      const child = spawn(command, args, {
-        shell: true,
-        stdio: ['ignore', 'pipe', 'pipe']
-      });
-
-      let downloadComplete = false;
-      let hasStarted = false;
-      const patterns = getProgressPatterns(firmwareInfo.type);
-
-      // Get download duration for progress estimation
-      const platformDuration = platformConfig?.downloadDuration || 30000;
-      const startTime = Date.now();
-
-      // Progress estimation timer - only update progress line
-      const progressTimer = setInterval(() => {
-        if (!downloadComplete && flashStatus === 'downloading') {
-          const elapsed = Date.now() - startTime;
-          const estimatedProgress = 5 + Math.min(90, (elapsed / platformDuration) * 90);
-          if (estimatedProgress > flashProgress) {
-            flashProgress = Math.floor(estimatedProgress);
-            updateProgressLine();
-          }
-        }
-      }, 500);
-
-      // Timeout
-      const timeout = setTimeout(() => {
-        if (!downloadComplete) {
-          clearInterval(progressTimer);
-          killProcessTree(child, 'SIGKILL');
-          flashStatus = 'error';
-          flashLogBuffer.push('Timeout - download terminated');
-          updateProgressLine();
-          reject(new Error('Timeout'));
-        }
-      }, 60000);
-
-      const stdoutRl = readline.createInterface({
-        input: child.stdout,
-        crlfDelay: Infinity
-      });
-
-      stdoutRl.on('line', (line: string) => {
-        let output: string;
-        if (isWindows()) {
-          output = iconvLite.decode(Buffer.from(line, 'binary'), 'gbk');
-        } else {
-          output = line;
-        }
-
-        flashLogBuffer.push(output);
-        const lowerOutput = output.toLowerCase();
-
-        // Detect status from output - only update progress line
-        for (const pattern of patterns.started) {
-          if (lowerOutput.includes(pattern.toLowerCase()) && !hasStarted) {
-            hasStarted = true;
-            flashStatus = 'started';
-            flashProgress = 5;
-            clearTimeout(timeout);
-            updateProgressLine();
-            break;
-          }
-        }
-
-        for (const pattern of patterns.downloading) {
-          if (lowerOutput.includes(pattern.toLowerCase())) {
-            flashStatus = 'downloading';
-            clearTimeout(timeout);
-            updateProgressLine();
-            break;
-          }
-        }
-
-        for (const pattern of patterns.completed) {
-          if (lowerOutput.includes(pattern.toLowerCase())) {
-            flashStatus = 'completed';
-            flashProgress = 100;
-            downloadComplete = true;
-            clearInterval(progressTimer);
-            clearTimeout(timeout);
-            updateProgressLine();
-            break;
-          }
-        }
-
-        for (const pattern of patterns.error) {
-          if (lowerOutput.includes(pattern.toLowerCase())) {
-            flashStatus = 'error';
-            downloadComplete = true;
-            clearInterval(progressTimer);
-            clearTimeout(timeout);
-            updateProgressLine();
-            break;
-          }
-        }
-      });
-
-      child.stderr.on('data', (data: Buffer) => {
-        const output = iconvLite.decode(data, 'gbk');
-        flashLogBuffer.push(`[ERR] ${output}`);
-      });
-
-      child.on('close', (code: number) => {
-        clearInterval(progressTimer);
-        clearTimeout(timeout);
-        downloadComplete = true;
-
-        if (code === 0 && flashStatus !== 'error') {
-          flashStatus = 'completed';
-          flashProgress = 100;
-        } else if (flashStatus !== 'completed') {
-          flashStatus = 'error';
-        }
-        // Final render to show completion/error and allow user interaction
-        renderScreen();
-        resolve();
-      });
-
-      child.on('error', (err: Error) => {
-        clearInterval(progressTimer);
-        clearTimeout(timeout);
-        flashStatus = 'error';
-        flashLogBuffer.push(`Process error: ${err.message}`);
-        updateProgressLine();
-        reject(err);
-      });
-
-    } catch (err) {
-      flashStatus = 'error';
-      const error = err as Error;
-      flashLogBuffer.push(`Error: ${error.message}`);
-      renderScreen();
-      reject(err);
+  try {
+    if (!fs.existsSync(firmwarePath)) {
+      throw new Error(`Firmware file does not exist: ${firmwarePath}`);
     }
-  });
+
+    const firmwareInfo = determineFirmwareType(firmwarePath);
+    const toolPath = getToolPath(firmwareInfo.type);
+
+    if (!fs.existsSync(toolPath)) {
+      throw new Error(`Download tool does not exist: ${toolPath}`);
+    }
+
+    const config = loadToolsConfig();
+    let platformKey: string | null = null;
+    let platformConfig: PlatformConfig | null = null;
+
+    for (const [key, platform] of Object.entries(config.platforms || {})) {
+      if (platform.type === firmwareInfo.type) {
+        platformKey = key;
+        platformConfig = platform;
+        break;
+      }
+    }
+
+    // Check download mode
+    if (platformConfig?.serial?.autoEnterDlMode) {
+      const dlPort = await findDownloadPort(platformKey);
+      if (!dlPort) {
+        await enterDownloadMode(platformKey || firmwareInfo.type, false, 2);
+      }
+    }
+
+    // Reset state before flash
+    flashProgress = 0;
+    flashStatus = 'idle';
+    flashLogBuffer = [];
+    renderScreen();
+
+    // Use executeFlash with progress callback
+    await executeFlash(toolPath, firmwareInfo.type, firmwareInfo.file, null, (progress, status, logLine) => {
+      flashProgress = progress;
+      flashStatus = status;
+      if (logLine) {
+        flashLogBuffer.push(logLine);
+      }
+      updateProgressLine();
+    });
+
+    // Final render to show completion
+    renderScreen();
+
+  } catch (err) {
+    flashStatus = 'error';
+    const error = err as Error;
+    flashLogBuffer.push(`Error: ${error.message}`);
+    renderScreen();
+    throw err;
+  }
 }
 
 // Track previous view line count for clearing extra lines
@@ -676,7 +560,7 @@ function renderScreen(fullClear: boolean = false): void {
       // Show firmware info
       const fw = firmwareList[selectedFirmware];
       if (fw) {
-        lines.push(COLOR_DIM + 'Firmware: ' + COLOR_RESET + truncate(fw.name, 40) + ' (' + fw.type + ', ' + formatSize(fw.size) + ')');
+        lines.push(COLOR_DIM + 'Firmware: ' + COLOR_RESET + truncate(fw.name, 40) + ' (' + theme.primary + fw.type + COLOR_RESET + ', ' + formatSize(fw.size) + ')');
       }
 
       // Show progress line
@@ -704,16 +588,28 @@ function renderScreen(fullClear: boolean = false): void {
       firmwareList.slice(0, 8).forEach((fw, i) => {
         const mark = i === selectedFirmware ? theme.primary + '❯' + COLOR_RESET : ' ';
         const rec = i === 0 ? COLOR_GREEN + ' *' + COLOR_RESET : '';
-        lines.push(` ${mark} ${i + 1}. ${fw.name} (${fw.type}) ${formatSize(fw.size)}${rec}`);
+        lines.push(` ${mark} ${i + 1}. ${fw.name} (${theme.primary}${fw.type}${COLOR_RESET}) ${formatSize(fw.size)}${rec}`);
       });
       if (firmwareList.length > 8) {
         lines.push(`   ... and ${firmwareList.length - 8} more`);
       }
+      // Show Firmware Path at bottom
       lines.push('');
-      lines.push(COLOR_DIM + '[↑/↓] navigate | [1-8] select | [Enter] flash | [R] refresh | [Esc] back' + COLOR_RESET);
+      const config = loadConfig() as any || {};
+      const fwPath = config.firmwarePath || '';
+      const pathStr = fwPath ? COLOR_DIM + truncatePath(fwPath, 50) + COLOR_RESET : COLOR_DIM + '(will check workspace build/release)' + COLOR_RESET;
+      lines.push(COLOR_DIM + 'Firmware Path: ' + pathStr + COLOR_RESET);
+      lines.push('');
+      lines.push(COLOR_DIM + '[↑/↓] navigate | [Enter] flash | [P] edit path | [R] refresh | [Esc] back' + COLOR_RESET);
     } else {
       lines.push(COLOR_DIM + 'No firmware found' + COLOR_RESET);
-      lines.push(COLOR_DIM + '[R] refresh | [Esc] back' + COLOR_RESET);
+      // Show Firmware Path at bottom
+      const config = loadConfig() as any || {};
+      const fwPath = config.firmwarePath || '';
+      const pathStr = fwPath ? COLOR_DIM + truncatePath(fwPath, 50) + COLOR_RESET : COLOR_DIM + '(will check workspace build/release)' + COLOR_RESET;
+      lines.push(COLOR_DIM + 'Firmware Path: ' + pathStr + COLOR_RESET);
+      lines.push('');
+      lines.push(COLOR_DIM + '[P] edit path | [R] refresh | [Esc] back' + COLOR_RESET);
     }
   } else if (currentView === 'ports') {
     lines.push(COLOR_BOLD + theme.primary + 'Serial Ports' + COLOR_RESET);
@@ -724,8 +620,8 @@ function renderScreen(fullClear: boolean = false): void {
       portList.slice(0, 8).forEach((port, i) => {
         const mark = i === selectedPort ? theme.primary + '❯' + COLOR_RESET : ' ';
         const paddedName = padDisplay(port.friendlyName, maxNameWidth);
-        const tags = port.tags.length > 0 ? COLOR_GREEN + '[' + port.tags.join(', ') + ']' + COLOR_RESET : COLOR_DIM + '[未标记]' + COLOR_RESET;
-        lines.push(` ${mark} ${i + 1}. ${paddedName} ${tags}`);
+        const tagStr = port.tag ? COLOR_GREEN + '[' + port.tag + ']' + COLOR_RESET : COLOR_DIM + '[未标记]' + COLOR_RESET;
+        lines.push(` ${mark} ${i + 1}. ${paddedName} ${tagStr}`);
       });
       if (portList.length > 8) {
         lines.push(`   ... and ${portList.length - 8} more`);
@@ -741,15 +637,15 @@ function renderScreen(fullClear: boolean = false): void {
     const port = portList[selectedPort];
     lines.push(COLOR_BOLD + theme.primary + 'Edit Port Tag' + COLOR_RESET);
     lines.push(`Port: ${port?.friendlyName || 'Unknown'}`);
-    lines.push(`Tags: ${port?.tags.length > 0 ? port.tags.join(', ') : '(none)'}`);
+    lines.push(`Current Tag: ${port?.tag || '(none)'}`);
     portTags.forEach((tag, i) => {
       const mark = i === selectedTag ? theme.primary + '❯' + COLOR_RESET : ' ';
-      const hasTag = port?.tags.includes(tag);
+      const hasTag = port?.tag === tag;
       const check = hasTag ? COLOR_GREEN + '✓' + COLOR_RESET : ' ';
       lines.push(` ${mark} ${i + 1}. ${tag} ${check}`);
     });
     lines.push('');
-    lines.push(COLOR_DIM + '[↑/↓] select tag | [Enter] add/remove | [D] clear all | [Esc] back' + COLOR_RESET);
+    lines.push(COLOR_DIM + '[↑/↓] select tag | [Enter] set tag | [D] clear | [Esc] back' + COLOR_RESET);
   } else if (currentView === 'settings') {
     lines.push(COLOR_BOLD + theme.primary + 'Settings' + COLOR_RESET);
     settingsItems.forEach((item, i) => {
@@ -766,6 +662,10 @@ function renderScreen(fullClear: boolean = false): void {
         valueStr = themeColorCode + currentTheme + COLOR_RESET;
       } else if (item.type === 'action') {
         valueStr = COLOR_DIM + 'dove.json' + COLOR_RESET;
+      } else if (item.type === 'path') {
+        const value = getConfigValue(config, item.key, item.type);
+        const pathValue = typeof value === 'string' ? value : String(value);
+        valueStr = pathValue ? COLOR_DIM + truncatePath(pathValue, 50) + COLOR_RESET : COLOR_DIM + '(will check cwd)' + COLOR_RESET;
       } else {
         const value = getConfigValue(config, item.key, item.type);
         valueStr = value ? COLOR_DIM + truncate(value, 30) + COLOR_RESET : COLOR_DIM + '(not set)' + COLOR_RESET;
@@ -773,7 +673,7 @@ function renderScreen(fullClear: boolean = false): void {
       lines.push(` ${mark} ${i + 1}. ${item.label}: ${valueStr}`);
     });
     lines.push('');
-    lines.push(COLOR_DIM + '[↑/↓] navigate | [1-5] select | [Enter] edit | [Esc] back' + COLOR_RESET);
+    lines.push(COLOR_DIM + '[↑/↓] navigate | [1-3] select | [Enter] edit | [Esc] back' + COLOR_RESET);
   } else if (currentView === 'theme-select') {
     lines.push(COLOR_BOLD + theme.primary + 'Select Theme Color' + COLOR_RESET);
     lines.push('');
@@ -803,12 +703,20 @@ function renderScreen(fullClear: boolean = false): void {
     lines.push('New value: ' + editInputBuffer + '\x1b[5m_' + COLOR_RESET);
     lines.push('');
     lines.push(COLOR_DIM + '[Enter] save | [Esc] cancel' + COLOR_RESET);
+  } else if (currentView === 'flash-edit') {
+    lines.push(COLOR_BOLD + theme.primary + 'Edit Firmware Path' + COLOR_RESET);
+    const config = loadConfig() as any || {};
+    const currentPath = config.firmwarePath || '';
+    lines.push(COLOR_DIM + 'Current: ' + (currentPath || '(will check workspace build/release)') + COLOR_RESET);
+    lines.push('New path: ' + editInputBuffer + '\x1b[5m_' + COLOR_RESET);
+    lines.push('');
+    lines.push(COLOR_DIM + '[Enter] save | [D] clear to default | [Esc] cancel' + COLOR_RESET);
   }
 
   // Status bar with box lines
   lines.push('');
   lines.push(theme.primary + '─'.repeat(termWidth) + COLOR_RESET);
-  lines.push(COLOR_DIM + 'Workspace: ' + workspaceName + COLOR_RESET);
+  lines.push(COLOR_DIM + 'workspace: ' + workspaceName + COLOR_RESET);
 
   // Output - incrementally update each line
   lines.forEach((line, idx) => {
@@ -844,11 +752,18 @@ export async function startTUI(): Promise<void> {
       // Global: Exit
       if (input === '\x03' || input === '\x1b' || (input === 'q' && currentView === 'main')) {
         if (input === '\x1b' && currentView !== 'main') {
-          // Ports and port-tag views return to settings
-          if (currentView === 'ports' || currentView === 'port-tag' || currentView === 'settings-edit' || currentView === 'theme-select') {
+          // port-tag view returns to ports (since Ports is in main menu now)
+          if (currentView === 'port-tag') {
+            currentView = 'ports';
+          } else if (currentView === 'ports') {
+            currentView = 'main';
+          } else if (currentView === 'settings-edit' || currentView === 'theme-select') {
             currentView = 'settings';
             editInputBuffer = '';
             editingSettingKey = '';
+          } else if (currentView === 'flash-edit') {
+            currentView = 'flash';
+            editInputBuffer = '';
           } else if (currentView === 'settings-detail') {
             currentView = 'settings';
           } else {
@@ -886,13 +801,15 @@ export async function startTUI(): Promise<void> {
               loadBuildCommands();
             } else if (item.action === 'flash') {
               await loadFirmwareList();
+            } else if (item.action === 'ports') {
+              await loadPortList();
             } else if (item.action === 'settings') {
-              await loadPortList();  // Preload ports for Settings display
+              // Settings view
             }
             renderScreen();
           }
-        } else if (input >= '1' && input <= '4') {
-          // Number keys for menu selection
+        } else if (input >= '1' && input <= '5') {
+          // Number keys for menu selection (5 items now)
           const idx = parseInt(input) - 1;
           if (idx >= 0 && idx < menuItems.length && idx !== selectedMenu) {
             const oldIndex = selectedMenu;
@@ -908,8 +825,10 @@ export async function startTUI(): Promise<void> {
                 loadBuildCommands();
               } else if (item.action === 'flash') {
                 await loadFirmwareList();
+              } else if (item.action === 'ports') {
+                await loadPortList();
               } else if (item.action === 'settings') {
-                await loadPortList();  // Preload ports for Settings display
+                // Settings view
               }
               renderScreen();
             }
@@ -926,6 +845,11 @@ export async function startTUI(): Promise<void> {
         } else {
           if (input === 'r' || input === 'R') {
             await loadFirmwareList();
+            renderScreen();
+          } else if (input === 'p' || input === 'P') {
+            // Edit firmware path
+            currentView = 'flash-edit';
+            editInputBuffer = '';
             renderScreen();
           } else if (input === '\x1b[A') { // Up
             const oldIndex = selectedFirmware;
@@ -955,6 +879,10 @@ export async function startTUI(): Promise<void> {
               renderScreen();
               try {
                 await flashFirmwareWithProgress(fw.path);
+                // Show result for 1 second after completion
+                if (flashStatus === 'completed') {
+                  await new Promise(resolve => setTimeout(resolve, 2000));
+                }
               } catch (err) {
                 // Error already handled
               }
@@ -1066,16 +994,20 @@ export async function startTUI(): Promise<void> {
               buildAddDescription = buildAddDescription.slice(0, -1);
             }
           renderScreen();
-          } else if (input.length === 1 && input >= ' ') { // Regular char
-            // Add to current field
-            if (buildAddStep === 0) {
-              buildAddName += input;
-            } else if (buildAddStep === 1) {
-              buildAddCommand += input;
-            } else {
-              buildAddDescription += input;
+          } else if (input.length > 0) { // Handle paste or single char
+            // Filter printable characters
+            const printable = input.replace(/[^\x20-\x7E]/g, '');
+            if (printable.length > 0) {
+              // Add to current field
+              if (buildAddStep === 0) {
+                buildAddName += printable;
+              } else if (buildAddStep === 1) {
+                buildAddCommand += printable;
+              } else {
+                buildAddDescription += printable;
+              }
+              renderScreen();
             }
-            renderScreen();
           }
         } else if (currentView === 'ports') {
         // Ports view
@@ -1126,24 +1058,16 @@ export async function startTUI(): Promise<void> {
             updateListSelection('port-tag', oldIndex, selectedTag);
           }
         } else if (input === '\r' || input === '\n') {
-          // Add or remove selected tag
+          // Set selected tag for this port
           const tag = portTags[selectedTag];
-          if (port.tags.includes(tag)) {
-            removePortTag(port.path, tag);
-          } else {
-            savePortTag(port.path, tag);
-          }
+          savePortTag(port.path, tag);
           // Reload port list to reflect changes
           await loadPortList();
           currentView = 'ports';
           renderScreen();
         } else if (input === 'd' || input === 'D') {
-          // Clear all tags for this port
-          const config = loadConfig() as any || {};
-          if (config.comPorts) {
-            config.comPorts = config.comPorts.filter((p: any) => p.port !== port.path);
-            saveConfig(config);
-          }
+          // Clear tag for this port (remove from config)
+          removePortTag(port.path);
           await loadPortList();
           currentView = 'ports';
           renderScreen();
@@ -1158,8 +1082,8 @@ export async function startTUI(): Promise<void> {
           const oldIndex = selectedSetting;
           selectedSetting = Math.min(settingsItems.length - 1, selectedSetting + 1);
           if (oldIndex !== selectedSetting) updateListSelection('settings', oldIndex, selectedSetting);
-        } else if (input >= '1' && input <= '5') {
-          // Number keys to select setting
+        } else if (input >= '1' && input <= '3') {
+          // Number keys to select setting (3 items now)
           const idx = parseInt(input) - 1;
           if (idx >= 0 && idx < settingsItems.length && idx !== selectedSetting) {
             const oldIndex = selectedSetting;
@@ -1169,12 +1093,7 @@ export async function startTUI(): Promise<void> {
         } else if (input === '\r' || input === '\n') {
           // Enter to show/edit setting
           const item = settingsItems[selectedSetting];
-          if (item.type === 'ports') {
-            // Enter Ports configuration view
-            await loadPortList();
-            currentView = 'ports';
-            renderScreen();
-          } else if (item.type === 'theme') {
+          if (item.type === 'theme') {
             // Enter theme color selection
             const config = loadConfig() as any || {};
             const currentTheme = config.theme?.color || 'cyan';
@@ -1278,10 +1197,52 @@ export async function startTUI(): Promise<void> {
           // Backspace
           editInputBuffer = editInputBuffer.slice(0, -1);
           renderScreen();
-        } else if (input.length === 1 && input.charCodeAt(0) >= 32) {
-          // Regular character input
-          editInputBuffer += input;
+        } else if (input.length > 0) {
+          // Handle paste (multi-char) or single character
+          // Filter printable characters (ASCII 32-126)
+          const printable = input.replace(/[^\x20-\x7E]/g, '');
+          if (printable.length > 0) {
+            editInputBuffer += printable;
+            renderScreen();
+          }
+        }
+      } else if (currentView === 'flash-edit') {
+        // Flash edit view - firmware path input
+        if (input === '\x1b') {
+          // Escape - cancel
+          currentView = 'flash';
+          editInputBuffer = '';
           renderScreen();
+        } else if (input === 'd' || input === 'D') {
+          // D - clear to default
+          const config = loadConfig() as any || {};
+          config.firmwarePath = '';
+          saveConfig(config);
+          currentView = 'flash';
+          editInputBuffer = '';
+          await loadFirmwareList();
+          renderScreen();
+        } else if (input === '\r' || input === '\n') {
+          // Enter - save and refresh firmware list
+          const config = loadConfig() as any || {};
+          config.firmwarePath = editInputBuffer;
+          saveConfig(config);
+          currentView = 'flash';
+          editInputBuffer = '';
+          await loadFirmwareList();
+          renderScreen();
+        } else if (input === '\x7f' || input === '\b') {
+          // Backspace
+          editInputBuffer = editInputBuffer.slice(0, -1);
+          renderScreen();
+        } else if (input.length > 0) {
+          // Handle paste (multi-char) or single character
+          // Filter printable characters (ASCII 32-126)
+          const printable = input.replace(/[^\x20-\x7E]/g, '');
+          if (printable.length > 0) {
+            editInputBuffer += printable;
+            renderScreen();
+          }
         }
       }
     });

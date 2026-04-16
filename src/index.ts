@@ -3,25 +3,15 @@
 import { flashFirmware, listDevices } from './flash';
 import { listFirmware } from './list';
 import { compileFirmware, listBuildCommands, setConfig, showConfig } from './compile';
-import { loadToolsConfig, loadConfig } from './utils';
+import { loadToolsConfig, loadConfig, initWorkspaceConfig } from './utils';
 import { showSerialList, openAndMonitorPort, sendATCommandCLI } from './serial';
 import type { MonitorOptions, CLIConfig, ComPortConfig, PortTag } from './types';
 
 /**
- * Get tag from port config (compatible with both new and legacy format)
- * New format: { port, tag: "AT" }
- * Legacy format: { port, tags: ["AT"], isActive }
+ * Get tag from port config
  */
 function getPortTag(portConfig: ComPortConfig): PortTag | null {
-  // New format: single tag
-  if (portConfig.tag) {
-    return portConfig.tag;
-  }
-  // Legacy format: tags array (use first tag)
-  if (portConfig.tags && portConfig.tags.length > 0) {
-    return portConfig.tags[0] as PortTag;
-  }
-  return null;
+  return portConfig.tag || null;
 }
 
 // TUI is optional - dynamic import to avoid bundling issues
@@ -135,7 +125,7 @@ function parseMonitorArgs(args: string[]): { portPath: string; options: Partial<
     // Filter out invalid ports, only show valid tags
     const validTags = config.comPorts
       .map(p => getPortTag(p))
-      .filter(t => t && t !== 'invalid');
+      .filter(t => t && t !== 'Invalid');
     return [...new Set(validTags)].join(', ');
   };
 
@@ -152,7 +142,7 @@ function parseMonitorArgs(args: string[]): { portPath: string; options: Partial<
         const portConfig = config.comPorts.find(p => getPortTag(p) === tag);
         if (portConfig) {
           const portTag = getPortTag(portConfig);
-          if (portTag === 'invalid') {
+          if (portTag === 'Invalid') {
             throw new Error(`Port '${portConfig.port}' is marked as invalid and cannot be used`);
           }
           portPath = portConfig.port;
@@ -297,14 +287,14 @@ async function handlePortAt(args: string[]): Promise<number> {
         const portConfig = config.comPorts.find(p => getPortTag(p) === tag);
         if (portConfig) {
           const portTag = getPortTag(portConfig);
-          if (portTag === 'invalid') {
+          if (portTag === 'Invalid') {
             throw new Error(`Port '${portConfig.port}' is marked as invalid and cannot be used`);
           }
           actualPortPath = portConfig.port;
         } else {
           const validTags = config.comPorts
             .map(p => getPortTag(p))
-            .filter(t => t && t !== 'invalid');
+            .filter(t => t && t !== 'Invalid');
           throw new Error(`No port found with tag '${tag}'. Available tags: ${validTags.join(', ')}`);
         }
       } else {
@@ -353,6 +343,9 @@ async function handlePortCommand(subcommand: string, args: string[]): Promise<nu
  * Main function
  */
 async function main(): Promise<number> {
+  // Initialize workspace config on startup
+  initWorkspaceConfig();
+
   const command = process.argv[2];
   const args = process.argv.slice(3);
 
