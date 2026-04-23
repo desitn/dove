@@ -3,8 +3,9 @@
  */
 
 import fs from 'fs';
+import path from 'path';
 import { spawn } from 'child_process';
-import { loadConfig, saveConfig, getToolPath, loadToolsConfig, determineFirmwareType, findWorkspacePath, findConfigPath } from '../utils';
+import { loadConfig, saveConfig, getToolPath, loadToolsConfig, determineFirmwareType, findWorkspacePath, findConfigPath, getProjectRoot } from '../utils';
 import { compileFirmware } from '../compile';
 import { findAllFirmwares, formatSize } from '../utils';
 import { executeFlash } from '../flash';
@@ -15,7 +16,7 @@ import type { FirmwareInfo, SerialPortInfo, PlatformConfig } from '../types';
 // List Selector - Universal partial refresh for list navigation
 // ============================================================
 
-type ListType = 'main' | 'build' | 'flash' | 'ports' | 'port-tag' | 'settings' | 'theme';
+type ListType = 'main' | 'build' | 'flash' | 'ports' | 'port-tag' | 'settings' | 'theme' | 'diag' | 'skill-hub' | 'skill-agent';
 
 // List base line offsets (line number where first item appears)
 const listBaseLines: Record<ListType, number> = {
@@ -26,6 +27,9 @@ const listBaseLines: Record<ListType, number> = {
   'port-tag':   7,  // After header 1-3, title 4, info 5-6
   'settings':   5,  // After header 1-3, title 4
   'theme':      6,  // After header 1-3, title 4, blank 5
+  'diag':       5,  // After header 1-3, title 4
+  'skill-hub':  5,  // After header 1-3, title 4
+  'skill-agent': 6, // After header 1-3, title 4, skill info 5
 };
 
 // Render item line for each list type
@@ -55,15 +59,25 @@ function renderListItem(type: ListType, index: number, isSelected: boolean): str
       if (firmwareList.length === 0) return '';
       const fw = firmwareList[index];
       const recFlash = index === 0 ? COLOR_GREEN + ' *' + COLOR_RESET : '';
-      return ` ${mark} ${index + 1}. ${fw.name} (${theme.primary}${fw.type}${COLOR_RESET}) ${formatSize(fw.size)}${recFlash}`;
+      // Format time
+      const fwTime = fw.time || (fw.mtime ? fw.mtime.toLocaleString().replace(/\s\d{4}-\d{2}-\d{2}\s/, ' ') : '');
+      // Truncate and pad with spaces (not tabs - ANSI codes break tab alignment)
+      const nameWidth = 48;
+      const typeWidth = 12;
+      const timeWidth = 20;
+      const truncatedFwName = truncate(fw.name, nameWidth);
+      const paddedFwName = padDisplay(truncatedFwName, nameWidth);
+      const paddedFwType = padDisplay(fw.type, typeWidth);
+      const paddedFwTime = padDisplay(fwTime, timeWidth);
+      return ` ${mark} ${index + 1}. ${paddedFwName}  ${theme.primary}${paddedFwType}${COLOR_RESET}  ${paddedFwTime}  ${formatSize(fw.size)}${recFlash}`;
 
     case 'ports':
       if (portList.length === 0) return '';
       const port = portList[index];
-      const maxNameWidth = Math.max(35, ...portList.slice(0, 8).map(p => displayWidth(p.friendlyName)));
-      const paddedName = padDisplay(port.friendlyName, maxNameWidth);
+      const maxPortNameWidth = Math.max(35, ...portList.slice(0, 8).map(p => displayWidth(p.friendlyName)));
+      const paddedPortName = padDisplay(port.friendlyName, maxPortNameWidth);
       const tagStr = port.tag ? COLOR_GREEN + '[' + port.tag + ']' + COLOR_RESET : COLOR_DIM + '[未标记]' + COLOR_RESET;
-      return ` ${mark} ${index + 1}. ${paddedName} ${tagStr}`;
+      return ` ${mark} ${index + 1}. ${paddedPortName} ${tagStr}`;
 
     case 'port-tag':
       const portForTag = portList[selectedPort];
@@ -103,6 +117,28 @@ function renderListItem(type: ListType, index: number, isSelected: boolean): str
       const checkTheme = colorName === currentTheme ? COLOR_GREEN + ' ✓' + COLOR_RESET : '';
       return ` ${mark} ${index + 1}. ${colorCode}${colorName}${COLOR_RESET}${checkTheme}`;
 
+    case 'diag':
+      const diagItem = diagItems[index];
+      const diagPrefix = isSelected ? theme.primary + '❯' + COLOR_RESET + ' ' : '  ';
+      const diagColor = isSelected ? COLOR_BOLD + theme.primary : '';
+      return `${diagPrefix}${diagColor}${index + 1}. ${diagItem.label}${COLOR_RESET}`;
+
+    case 'skill-hub':
+      const skill = skillItems[index];
+      const skillPrefix = isSelected ? theme.primary + '❯' + COLOR_RESET + ' ' : '  ';
+      const skillColor = isSelected ? COLOR_BOLD + theme.primary : '';
+      const skillDescDisplay = skill.desc ? ` ${COLOR_DIM}(${skill.desc})${COLOR_RESET}` : '';
+      return `${skillPrefix}${skillColor}${index + 1}. ${skill.name}${COLOR_RESET}${skillDescDisplay}`;
+
+    case 'skill-agent':
+      const agent = agentTargets[index];
+      const agentPrefix = isSelected ? theme.primary + '❯' + COLOR_RESET + ' ' : '  ';
+      const agentColor = isSelected ? COLOR_BOLD + theme.primary : '';
+      // Check if skill is installed for this agent
+      const agentInstalled = checkSkillInstalled(agent);
+      const agentInstallMark = agentInstalled ? COLOR_GREEN + ' ✓' + COLOR_RESET : COLOR_DIM + ' (not installed)' + COLOR_RESET;
+      return `${agentPrefix}${agentColor}${index + 1}. ${agent}${COLOR_RESET}${agentInstallMark}`;
+
     default:
       return '';
   }
@@ -121,6 +157,9 @@ function updateListSelection(type: ListType, oldIndex: number, newIndex: number)
     'port-tag': portTags.length,
     'settings': settingsItems.length,
     'theme': themeColorNames.length,
+    'diag': diagItems.length,
+    'skill-hub': skillItems.length,
+    'skill-agent': agentTargets.length,
   };
 
   const maxLen = listLengths[type];
@@ -169,7 +208,7 @@ const COLOR_RED = '\x1b[31m';
 const COLOR_YELLOW = '\x1b[33m';
 
 // State variables
-let currentView: 'main' | 'build' | 'build-add' | 'flash' | 'flash-edit' | 'ports' | 'port-tag' | 'settings' | 'settings-detail' | 'settings-edit' | 'theme-select' = 'main';
+let currentView: 'main' | 'build' | 'build-add' | 'flash' | 'flash-edit' | 'ports' | 'port-tag' | 'settings' | 'settings-detail' | 'settings-edit' | 'theme-select' | 'diag' | 'skill-hub' | 'skill-agent' = 'main';
 let selectedMenu = 0;
 let outputBuffer: string[] = [];
 let isExecuting = false;
@@ -193,22 +232,24 @@ let spinnerIndex = 0;
 const spinnerChars = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
 // Menu items
-const menuItems: { label: string; action: 'build' | 'flash' | 'ports' | 'settings' | 'quit' }[] = [
+const menuItems: { label: string; action: 'build' | 'flash' | 'ports' | 'settings' | 'diag' | 'quit' }[] = [
   { label: 'Build', action: 'build' },
   { label: 'Flash', action: 'flash' },
   { label: 'Ports', action: 'ports' },
+  { label: 'Diagnosis', action: 'diag' },
   { label: 'Settings', action: 'settings' },
   { label: 'Quit', action: 'quit' },
 ];
 
 // Predefined port tags
-const portTags = ['AT', 'DBG', 'Invalid'];
+const portTags = ['UART_AT', 'UART_DBG', 'USB_AT', 'USB_DIAG', 'Invalid'];
 let selectedTag = 0;
 
 // Settings items (Firmware Path moved to Flash menu)
 const settingsItems = [
   { key: 'workspacePath', label: 'Workspace Path', type: 'path' },
   { key: 'theme', label: 'Theme Color', type: 'theme' },
+  { key: 'skillHub', label: 'Skill Hub', type: 'skill' },
   { key: 'openConfig', label: 'Open Config File', type: 'action' },
 ];
 let selectedSetting = 0;
@@ -216,6 +257,47 @@ let selectedSetting = 0;
 // Theme color options (color names array)
 const themeColorNames = ['cyan', 'blue', 'green', 'magenta', 'yellow', 'red', 'white'];
 let selectedThemeColor = 0;
+
+// Diagnosis items (placeholder for future expansion)
+const diagItems: { label: string; tool: string; desc: string }[] = [
+  { label: 'Run Gonzo Diagnostic', tool: 'gonzo', desc: 'Run gonzo.exe diagnostic tool' },
+  { label: 'PATH Environment Doctor', tool: 'env_doctor', desc: 'Check and fix PATH issues' },
+];
+let selectedDiag = 0;
+
+// Helper: load skill description from SKILL.md frontmatter
+function loadSkillDescription(skillName: string): string {
+  const projectRoot = getProjectRoot();
+  const skillPath = path.join(projectRoot, 'skill', skillName, 'SKILL.md');
+  if (!fs.existsSync(skillPath)) return '';
+
+  try {
+    const content = fs.readFileSync(skillPath, 'utf8');
+    // Extract description from frontmatter (between --- lines)
+    const frontmatterMatch = content.match(/^---\n([\s\S]*?)\n---/);
+    if (frontmatterMatch) {
+      const descMatch = frontmatterMatch[1].match(/description:\s*(.+)/);
+      if (descMatch) {
+        const desc = descMatch[1].trim();
+        return desc.length > 15 ? desc.substring(0, 15) : desc;
+      }
+    }
+  } catch {
+    return '';
+  }
+  return '';
+}
+
+// Skill Hub items - load descriptions dynamically
+const skillItems: { name: string; desc: string; sourcePath: string }[] = [
+  { name: 'dove-action', desc: loadSkillDescription('dove-action'), sourcePath: '' },
+  { name: 'dove-query', desc: loadSkillDescription('dove-query'), sourcePath: '' },
+];
+let selectedSkill = 0;
+
+// Agent targets for skill installation
+const agentTargets = ['claude-code', 'cline', 'cursor', 'copilot'];
+let selectedAgent = 0;
 
 // Settings edit state
 let editingSettingKey = '';
@@ -256,11 +338,13 @@ async function loadPortList(): Promise<void> {
   const config = loadConfig() as any || {};
   const comPorts = config.comPorts || [];
 
-  // Tag priority: AT -> DBG -> Invalid -> null
+  // Tag priority: UART_AT -> UART_DBG -> USB_AT -> USB_DIAG -> Invalid -> null
   const tagPriority: Record<string, number> = {
-    'AT': 1,
-    'DBG': 2,
-    'Invalid': 3
+    'UART_AT': 1,
+    'UART_DBG': 2,
+    'USB_AT': 3,
+    'USB_DIAG': 4,
+    'Invalid': 5
   };
 
   // Helper: extract COM number for sorting
@@ -278,8 +362,8 @@ async function loadPortList(): Promise<void> {
     };
   }).filter(port => port.path !== 'COM1')
     .sort((a, b) => {
-      const priorityA = a.tag ? tagPriority[a.tag] || 4 : 4;
-      const priorityB = b.tag ? tagPriority[b.tag] || 4 : 4;
+      const priorityA = a.tag ? tagPriority[a.tag] || 6 : 6;
+      const priorityB = b.tag ? tagPriority[b.tag] || 6 : 6;
       if (priorityA !== priorityB) return priorityA - priorityB;
       return getComNumber(a.path) - getComNumber(b.path);
     });
@@ -337,6 +421,35 @@ function truncate(str: string | number, maxLen: number): string {
   if (!str) return '';
   if (str.length <= maxLen) return str;
   return str.substring(0, maxLen - 3) + '...';
+}
+
+// Helper: get agent skill path
+function getAgentSkillPath(agent: string): string {
+  const userHome = process.env.USERPROFILE || process.env.HOME || '';
+  switch (agent) {
+    case 'claude-code':
+      return path.join(userHome, '.claude', 'skills');
+    case 'cline':
+      return path.join(userHome, '.agents', 'skills');
+    case 'cursor':
+      return path.join(userHome, '.cursor', 'skills');
+    case 'copilot':
+      return path.join(userHome, '.github', 'copilot', 'skills');
+    default:
+      return '';
+  }
+}
+
+// Helper: check if skill is installed for agent
+function checkSkillInstalled(agent: string): boolean {
+  const skillPath = getAgentSkillPath(agent);
+  if (!skillPath) return false;
+
+  // Check if dove-action and dove-query exist
+  const doveActionPath = path.join(skillPath, 'dove-action', 'SKILL.md');
+  const doveQueryPath = path.join(skillPath, 'dove-query', 'SKILL.md');
+
+  return fs.existsSync(doveActionPath) && fs.existsSync(doveQueryPath);
 }
 
 // Helper: truncate path string (show beginning and end, omit middle)
@@ -437,19 +550,22 @@ async function flashFirmwareWithProgress(firmwarePath: string): Promise<void> {
       }
     }
 
-    // Check download mode
-    if (platformConfig?.serial?.autoEnterDlMode) {
-      const dlPort = await findDownloadPort(platformKey);
-      if (!dlPort) {
-        await enterDownloadMode(platformKey || firmwareInfo.type, false, 2);
-      }
-    }
-
-    // Reset state before flash
+    // Reset state before flash (including enterDownloadMode logs)
     flashProgress = 0;
     flashStatus = 'idle';
     flashLogBuffer = [];
     renderScreen();
+
+    // Check download mode
+    if (platformConfig?.serial?.autoEnterDlMode) {
+      const dlPort = await findDownloadPort(platformKey);
+      if (!dlPort) {
+        await enterDownloadMode(platformKey || firmwareInfo.type, false, 2, (msg) => {
+          flashLogBuffer.push(msg);
+          renderScreen();
+        });
+      }
+    }
 
     // Use executeFlash with progress callback
     await executeFlash(toolPath, firmwareInfo.type, firmwareInfo.file, null, (progress, status, logLine) => {
@@ -556,8 +672,34 @@ function renderScreen(fullClear: boolean = false): void {
     lines.push(COLOR_DIM + '[↑/↓] switch field | [Enter] save | [Esc] cancel' + COLOR_RESET);
   } else if (currentView === 'flash') {
     lines.push(COLOR_BOLD + theme.primary + 'Flash Firmware' + COLOR_RESET);
-    if (isExecuting) {
-      // Show firmware info
+
+    // Check if showing result (after execution completed/failed)
+    if (!isExecuting && (flashStatus === 'completed' || flashStatus === 'error')) {
+      // Show result page
+      const fw = firmwareList[selectedFirmware];
+      if (fw) {
+        lines.push(COLOR_DIM + 'Firmware: ' + COLOR_RESET + truncate(fw.name, 40) + ' (' + theme.primary + fw.type + COLOR_RESET + ')');
+      }
+      lines.push('');
+
+      // Show result status
+      const statusColor = flashStatus === 'completed' ? COLOR_GREEN : COLOR_RED;
+      const statusText = flashStatus === 'completed' ? '✓ Download OK!' : '✗ Download Failed!';
+      lines.push(`${statusColor}${statusText}${COLOR_RESET}`);
+
+      // Show log
+      if (flashLogBuffer.length > 0) {
+        lines.push('');
+        lines.push(COLOR_DIM + '─── Output Log ───' + COLOR_RESET);
+        flashLogBuffer.slice(-15).forEach(line => {
+          lines.push(COLOR_DIM + truncate(line, termWidth - 4) + COLOR_RESET);
+        });
+      }
+
+      lines.push('');
+      lines.push(COLOR_DIM + '[Enter/Esc] return to firmware list' + COLOR_RESET);
+    } else if (isExecuting) {
+      // Show firmware info during execution
       const fw = firmwareList[selectedFirmware];
       if (fw) {
         lines.push(COLOR_DIM + 'Firmware: ' + COLOR_RESET + truncate(fw.name, 40) + ' (' + theme.primary + fw.type + COLOR_RESET + ', ' + formatSize(fw.size) + ')');
@@ -588,7 +730,17 @@ function renderScreen(fullClear: boolean = false): void {
       firmwareList.slice(0, 8).forEach((fw, i) => {
         const mark = i === selectedFirmware ? theme.primary + '❯' + COLOR_RESET : ' ';
         const rec = i === 0 ? COLOR_GREEN + ' *' + COLOR_RESET : '';
-        lines.push(` ${mark} ${i + 1}. ${fw.name} (${theme.primary}${fw.type}${COLOR_RESET}) ${formatSize(fw.size)}${rec}`);
+        const fwTime = fw.time || (fw.mtime ? fw.mtime.toLocaleString().replace(/\s\d{4}-\d{2}-\d{2}\s/, ' ') : '');
+        // Truncate name if too long, then pad with spaces (not tabs)
+        const nameWidth = 48;
+        const typeWidth = 12;
+        const timeWidth = 20;
+        const truncatedName = truncate(fw.name, nameWidth);
+        const paddedName = padDisplay(truncatedName, nameWidth);
+        const paddedType = padDisplay(fw.type, typeWidth);
+        const paddedTime = padDisplay(fwTime, timeWidth);
+        // Use space separators, not tabs - ANSI codes break tab alignment
+        lines.push(` ${mark} ${i + 1}. ${paddedName}  ${theme.primary}${paddedType}${COLOR_RESET}  ${paddedTime}  ${formatSize(fw.size)}${rec}`);
       });
       if (firmwareList.length > 8) {
         lines.push(`   ... and ${firmwareList.length - 8} more`);
@@ -660,6 +812,10 @@ function renderScreen(fullClear: boolean = false): void {
         const currentTheme = config.theme?.color || 'cyan';
         const themeColorCode = themeColorMap[currentTheme]?.primary || themeColorMap.cyan.primary;
         valueStr = themeColorCode + currentTheme + COLOR_RESET;
+      } else if (item.type === 'skill') {
+        // Show installed agents count
+        const installedCount = agentTargets.filter(a => checkSkillInstalled(a)).length;
+        valueStr = COLOR_DIM + '(' + installedCount + '/' + agentTargets.length + ' agents)' + COLOR_RESET;
       } else if (item.type === 'action') {
         valueStr = COLOR_DIM + 'dove.json' + COLOR_RESET;
       } else if (item.type === 'path') {
@@ -673,7 +829,7 @@ function renderScreen(fullClear: boolean = false): void {
       lines.push(` ${mark} ${i + 1}. ${item.label}: ${valueStr}`);
     });
     lines.push('');
-    lines.push(COLOR_DIM + '[↑/↓] navigate | [1-3] select | [Enter] edit | [Esc] back' + COLOR_RESET);
+    lines.push(COLOR_DIM + '[↑/↓] navigate | [1-4] select | [Enter] edit | [Esc] back' + COLOR_RESET);
   } else if (currentView === 'theme-select') {
     lines.push(COLOR_BOLD + theme.primary + 'Select Theme Color' + COLOR_RESET);
     lines.push('');
@@ -711,6 +867,49 @@ function renderScreen(fullClear: boolean = false): void {
     lines.push('New path: ' + editInputBuffer + '\x1b[5m_' + COLOR_RESET);
     lines.push('');
     lines.push(COLOR_DIM + '[Enter] save | [D] clear to default | [Esc] cancel' + COLOR_RESET);
+  } else if (currentView === 'diag') {
+    lines.push(COLOR_BOLD + theme.primary + 'Diagnosis Tools' + COLOR_RESET);
+    diagItems.forEach((item, i) => {
+      const isSelected = i === selectedDiag;
+      const prefix = isSelected ? theme.primary + '❯' + COLOR_RESET + ' ' : '  ';
+      const color = isSelected ? COLOR_BOLD + theme.primary : '';
+      lines.push(`${prefix}${color}${i + 1}. ${item.label}${COLOR_RESET}`);
+    });
+    lines.push('');
+    lines.push(COLOR_DIM + '[↑/↓] navigate | [Enter] run | [Esc] back' + COLOR_RESET);
+  } else if (currentView === 'skill-hub') {
+    lines.push(COLOR_BOLD + theme.primary + 'Skill Hub' + COLOR_RESET);
+    skillItems.forEach((item, i) => {
+      const isSelected = i === selectedSkill;
+      const prefix = isSelected ? theme.primary + '❯' + COLOR_RESET + ' ' : '  ';
+      const color = isSelected ? COLOR_BOLD + theme.primary : '';
+      const descDisplay = item.desc ? ` ${COLOR_DIM}(${item.desc})${COLOR_RESET}` : '';
+      lines.push(`${prefix}${color}${i + 1}. ${item.name}${COLOR_RESET}${descDisplay}`);
+    });
+    lines.push('');
+    lines.push(COLOR_DIM + '[↑/↓] navigate | [Enter] select agent | [Esc] back' + COLOR_RESET);
+  } else if (currentView === 'skill-agent') {
+    const skill = skillItems[selectedSkill];
+    // Title on line 4, desc on line 5, items start on line 6
+    lines.push(COLOR_BOLD + theme.primary + 'Install: ' + skill.name + COLOR_RESET);
+    // Always output desc line (line 5) to keep baseLine consistent
+    if (skill.desc) {
+      lines.push(COLOR_DIM + truncate(skill.desc, 60) + COLOR_RESET);
+    } else {
+      lines.push(''); // Empty line if no desc
+    }
+    // Items start on line 6
+    agentTargets.forEach((agent, i) => {
+      const isSelected = i === selectedAgent;
+      const prefix = isSelected ? theme.primary + '❯' + COLOR_RESET + ' ' : '  ';
+      const color = isSelected ? COLOR_BOLD + theme.primary : '';
+      const isInstalled = checkSkillInstalled(agent);
+      const installMark = isInstalled ? COLOR_GREEN + ' ✓' + COLOR_RESET : COLOR_DIM + ' (not installed)' + COLOR_RESET;
+      lines.push(`${prefix}${color}${i + 1}. ${agent}${COLOR_RESET}${installMark}`);
+    });
+    lines.push('');
+    const installHint = checkSkillInstalled(agentTargets[selectedAgent]) ? '[Enter] uninstall | [Esc] back' : '[Enter] install | [Esc] back';
+    lines.push(COLOR_DIM + '[↑/↓] select agent | ' + installHint + COLOR_RESET);
   }
 
   // Status bar with box lines
@@ -757,10 +956,12 @@ export async function startTUI(): Promise<void> {
             currentView = 'ports';
           } else if (currentView === 'ports') {
             currentView = 'main';
-          } else if (currentView === 'settings-edit' || currentView === 'theme-select') {
+          } else if (currentView === 'settings-edit' || currentView === 'theme-select' || currentView === 'skill-hub') {
             currentView = 'settings';
             editInputBuffer = '';
             editingSettingKey = '';
+          } else if (currentView === 'skill-agent') {
+            currentView = 'skill-hub';
           } else if (currentView === 'flash-edit') {
             currentView = 'flash';
             editInputBuffer = '';
@@ -801,15 +1002,22 @@ export async function startTUI(): Promise<void> {
               loadBuildCommands();
             } else if (item.action === 'flash') {
               await loadFirmwareList();
+              // Reset flash status when entering flash view
+              flashStatus = 'idle';
+              flashLogBuffer = [];
+              flashProgress = 0;
             } else if (item.action === 'ports') {
               await loadPortList();
             } else if (item.action === 'settings') {
               // Settings view
+            } else if (item.action === 'diag') {
+              // Diagnosis view
+              selectedDiag = 0;
             }
             renderScreen();
           }
-        } else if (input >= '1' && input <= '5') {
-          // Number keys for menu selection (5 items now)
+        } else if (input >= '1' && input <= '6') {
+          // Number keys for menu selection (6 items now)
           const idx = parseInt(input) - 1;
           if (idx >= 0 && idx < menuItems.length && idx !== selectedMenu) {
             const oldIndex = selectedMenu;
@@ -829,20 +1037,30 @@ export async function startTUI(): Promise<void> {
                 await loadPortList();
               } else if (item.action === 'settings') {
                 // Settings view
+              } else if (item.action === 'diag') {
+                selectedDiag = 0;
               }
               renderScreen();
             }
           }
         }
       } else if (currentView === 'flash') {
-        // Flash view - firmware selection
+        // Flash view - firmware selection or result display
         if (isExecuting) {
           // During execution, handle Ctrl+O to toggle log
           if (input === '\x0f') { // Ctrl+O
             showFlashLog = !showFlashLog;
             renderScreen();
           }
+        } else if (flashStatus === 'completed' || flashStatus === 'error') {
+          // Showing result - Enter/Esc to return to list
+          if (input === '\r' || input === '\n' || input === '\x1b') {
+            flashStatus = 'idle';
+            flashLogBuffer = [];
+            renderScreen();
+          }
         } else {
+          // Normal firmware selection
           if (input === 'r' || input === 'R') {
             await loadFirmwareList();
             renderScreen();
@@ -879,15 +1097,13 @@ export async function startTUI(): Promise<void> {
               renderScreen();
               try {
                 await flashFirmwareWithProgress(fw.path);
-                // Show result for 1 second after completion
-                if (flashStatus === 'completed') {
-                  await new Promise(resolve => setTimeout(resolve, 2000));
-                }
+                // After completion, show result and wait for user input
               } catch (err) {
-                // Error already handled
+                // Error already handled, flashStatus will be 'error'
               }
               isExecuting = false;
-              renderScreen();
+              // Don't return to list immediately - stay in flash view showing result
+              // User can press Enter/Esc to return
             }
           }
         }
@@ -1050,7 +1266,7 @@ export async function startTUI(): Promise<void> {
           const oldIndex = selectedTag;
           selectedTag = Math.min(portTags.length - 1, selectedTag + 1);
           if (oldIndex !== selectedTag) updateListSelection('port-tag', oldIndex, selectedTag);
-        } else if (input >= '1' && input <= '3') {
+        } else if (input >= '1' && input <= '5') {
           const idx = parseInt(input) - 1;
           if (idx >= 0 && idx < portTags.length && idx !== selectedTag) {
             const oldIndex = selectedTag;
@@ -1082,8 +1298,8 @@ export async function startTUI(): Promise<void> {
           const oldIndex = selectedSetting;
           selectedSetting = Math.min(settingsItems.length - 1, selectedSetting + 1);
           if (oldIndex !== selectedSetting) updateListSelection('settings', oldIndex, selectedSetting);
-        } else if (input >= '1' && input <= '3') {
-          // Number keys to select setting (3 items now)
+        } else if (input >= '1' && input <= '4') {
+          // Number keys to select setting (4 items now)
           const idx = parseInt(input) - 1;
           if (idx >= 0 && idx < settingsItems.length && idx !== selectedSetting) {
             const oldIndex = selectedSetting;
@@ -1100,6 +1316,11 @@ export async function startTUI(): Promise<void> {
             selectedThemeColor = themeColorNames.indexOf(currentTheme);
             if (selectedThemeColor < 0) selectedThemeColor = 0;
             currentView = 'theme-select';
+            renderScreen();
+          } else if (item.type === 'skill') {
+            // Enter skill hub
+            selectedSkill = 0;
+            currentView = 'skill-hub';
             renderScreen();
           } else if (item.type === 'action') {
             // Open config file with notepad
@@ -1241,6 +1462,115 @@ export async function startTUI(): Promise<void> {
           const printable = input.replace(/[^\x20-\x7E]/g, '');
           if (printable.length > 0) {
             editInputBuffer += printable;
+            renderScreen();
+          }
+        }
+      } else if (currentView === 'diag') {
+        // Diagnosis view - tool selection
+        if (input === '\x1b[A') { // Up
+          const oldIndex = selectedDiag;
+          selectedDiag = Math.max(0, selectedDiag - 1);
+          if (oldIndex !== selectedDiag) updateListSelection('diag', oldIndex, selectedDiag);
+        } else if (input === '\x1b[B') { // Down
+          const oldIndex = selectedDiag;
+          selectedDiag = Math.min(diagItems.length - 1, selectedDiag + 1);
+          if (oldIndex !== selectedDiag) updateListSelection('diag', oldIndex, selectedDiag);
+        } else if (input >= '1' && input <= '2') {
+          // Number keys to select tool
+          const idx = parseInt(input) - 1;
+          if (idx >= 0 && idx < diagItems.length && idx !== selectedDiag) {
+            const oldIndex = selectedDiag;
+            selectedDiag = idx;
+            updateListSelection('diag', oldIndex, selectedDiag);
+          }
+        } else if (input === '\r' || input === '\n') {
+          // Enter - run selected diagnostic tool
+          const item = diagItems[selectedDiag];
+          const projectRoot = getProjectRoot();
+
+          if (item.tool === 'gonzo') {
+            // Run gonzo.exe in new window
+            const gonzoPath = path.join(projectRoot, 'tools', 'diag', 'gonzo.exe');
+            spawn('cmd', ['/c', 'start', 'cmd', '/k', gonzoPath], { detached: true, stdio: 'ignore' });
+          } else if (item.tool === 'env_doctor') {
+            // Run env_doctor.ps1 in new window
+            const ps1Path = path.join(projectRoot, 'env', 'env_doctor.ps1');
+            spawn('cmd', ['/c', 'start', 'powershell', '-NoExit', '-ExecutionPolicy', 'Bypass', '-File', ps1Path], { detached: true, stdio: 'ignore' });
+          }
+          // Return to main menu after launching
+          currentView = 'main';
+          renderScreen();
+        }
+      } else if (currentView === 'skill-hub') {
+        // Skill Hub view - skill selection
+        if (input === '\x1b[A') { // Up
+          const oldIndex = selectedSkill;
+          selectedSkill = Math.max(0, selectedSkill - 1);
+          if (oldIndex !== selectedSkill) updateListSelection('skill-hub', oldIndex, selectedSkill);
+        } else if (input === '\x1b[B') { // Down
+          const oldIndex = selectedSkill;
+          selectedSkill = Math.min(skillItems.length - 1, selectedSkill + 1);
+          if (oldIndex !== selectedSkill) updateListSelection('skill-hub', oldIndex, selectedSkill);
+        } else if (input >= '1' && input <= '2') {
+          const idx = parseInt(input) - 1;
+          if (idx >= 0 && idx < skillItems.length && idx !== selectedSkill) {
+            const oldIndex = selectedSkill;
+            selectedSkill = idx;
+            updateListSelection('skill-hub', oldIndex, selectedSkill);
+          }
+        } else if (input === '\r' || input === '\n') {
+          // Enter - go to agent selection
+          selectedAgent = 0;
+          currentView = 'skill-agent';
+          renderScreen();
+        }
+      } else if (currentView === 'skill-agent') {
+        // Skill Agent view - select agent and install/uninstall
+        if (input === '\x1b[A') { // Up
+          const oldIndex = selectedAgent;
+          selectedAgent = Math.max(0, selectedAgent - 1);
+          if (oldIndex !== selectedAgent) updateListSelection('skill-agent', oldIndex, selectedAgent);
+        } else if (input === '\x1b[B') { // Down
+          const oldIndex = selectedAgent;
+          selectedAgent = Math.min(agentTargets.length - 1, selectedAgent + 1);
+          if (oldIndex !== selectedAgent) updateListSelection('skill-agent', oldIndex, selectedAgent);
+        } else if (input >= '1' && input <= '4') {
+          const idx = parseInt(input) - 1;
+          if (idx >= 0 && idx < agentTargets.length && idx !== selectedAgent) {
+            const oldIndex = selectedAgent;
+            selectedAgent = idx;
+            updateListSelection('skill-agent', oldIndex, selectedAgent);
+          }
+        } else if (input === '\r' || input === '\n') {
+          // Enter - install or uninstall skill for selected agent
+          const agent = agentTargets[selectedAgent];
+          const skillPath = getAgentSkillPath(agent);
+          const isInstalled = checkSkillInstalled(agent);
+          const projectRoot = getProjectRoot();
+
+          if (isInstalled) {
+            // Uninstall: remove skill files
+            const skillNames = ['dove-action', 'dove-query'];
+            for (const skillName of skillNames) {
+              const skillDir = path.join(skillPath, skillName);
+              if (fs.existsSync(skillDir)) {
+                fs.rmSync(skillDir, { recursive: true, force: true });
+              }
+            }
+            // Show success briefly then return
+            renderScreen();
+          } else {
+            // Install: copy skill files
+            const skillNames = ['dove-action', 'dove-query'];
+            for (const skillName of skillNames) {
+              const srcPath = path.join(projectRoot, 'skill', skillName, 'SKILL.md');
+              if (fs.existsSync(srcPath)) {
+                const destDir = path.join(skillPath, skillName);
+                fs.mkdirSync(destDir, { recursive: true });
+                fs.copyFileSync(srcPath, path.join(destDir, 'SKILL.md'));
+              }
+            }
+            // Show success then return
             renderScreen();
           }
         }

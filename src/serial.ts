@@ -343,75 +343,84 @@ export async function sendATCommandCLI(
 export async function enterDownloadMode(
   platform: string = 'asr160x',
   force: boolean = false,
-  timeout: number = 2
+  timeout: number = 2,
+  onLog?: (message: string) => void
 ): Promise<EnterDownloadModeResult> {
-  console.log('Enter Download Mode Tool');
-  console.log('='.repeat(50));
-  console.log(`Platform: ${platform}, Force: ${force}, Timeout: ${timeout}s`);
-  
+  const log = (msg: string) => {
+    if (onLog) {
+      onLog(msg);
+    } else {
+      console.log(msg);
+    }
+  };
+
+  log('Enter Download Mode Tool');
+  log('='.repeat(50));
+  log(`Platform: ${platform}, Force: ${force}, Timeout: ${timeout}s`);
+
   const config = loadToolsConfig();
   const serialConfig = config.platforms?.[platform]?.serial || null;
-  
+
   if (!serialConfig) {
-    console.log(`Platform ${platform} has no serial config, skip enter download mode`);
+    log(`Platform ${platform} has no serial config, skip enter download mode`);
     return { success: true, skipped: true, reason: 'No serial config' };
   }
-  
+
   const dlPort = await findDownloadPort(platform);
   if (dlPort) {
-    console.log(`Device already in download mode: ${dlPort.path}`);
-    console.log(`   Description: ${dlPort.description}`);
+    log(`Device already in download mode: ${dlPort.path}`);
+    log(`   Description: ${dlPort.description}`);
     return { success: true, port: dlPort.path, alreadyInMode: true };
   }
-  
-  console.log('Searching AT port...');
+
+  log('Searching AT port...');
   const atPort = await findATPort(platform);
   if (!atPort) {
-    console.error('AT port not found');
+    log('AT port not found');
     return { success: false, error: 'AT port not found' };
   }
-  
-  console.log(`Found AT port: ${atPort.path}`);
-  console.log(`   Description: ${atPort.description}`);
-  
+
+  log(`Found AT port: ${atPort.path}`);
+  log(`   Description: ${atPort.description}`);
+
   let atCommand = serialConfig.atCommand;
   if (force && serialConfig.atCommandForce) {
     atCommand = serialConfig.atCommandForce;
   }
-  
-  console.log(`Sending command: ${atCommand}`);
-  
+
+  log(`Sending command: ${atCommand}`);
+
   try {
     const result = await sendATCommand(atPort.path, atCommand, timeout * 1000);
-    
-    console.log(`Response:\n${result.response}`);
-    
+
+    log(`Response:\n${result.response}`);
+
     if (result.success === true) {
-      console.log('Command executed successfully');
+      log('Command executed successfully');
     } else if (result.success === false) {
-      console.log('Command execution failed');
+      log('Command execution failed');
       return { success: false, error: 'AT command returned ERROR' };
     } else if (result.timeout) {
-      console.log('Response timeout: module may be restarting');
+      log('Response timeout: module may be restarting');
     }
-    
-    console.log('Checking download port...');
+
+    log('Checking download port...');
     for (let i = 0; i < 10; i++) {
       await new Promise(resolve => setTimeout(resolve, 500));
       const newDlPort = await findDownloadPort();
       if (newDlPort) {
-        console.log(`Successfully entered download mode: ${newDlPort.path}`);
+        log(`Successfully entered download mode: ${newDlPort.path}`);
         return { success: true, port: newDlPort.path };
       }
-      console.log(`   Checking ${i + 1}/10...`);
+      log(`   Checking ${i + 1}/10...`);
     }
-    
-    console.error('Download port not detected');
+
+    log('Download port not detected');
     return { success: false, error: 'Download port not detected' };
-    
+
   } catch (error) {
     const err = error as Error;
-    console.error('Failed to send command:', err.message);
+    log(`Failed to send command: ${err.message}`);
     return { success: false, error: err.message };
   }
 }

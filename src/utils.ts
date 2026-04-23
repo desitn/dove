@@ -287,10 +287,12 @@ export function getGlobalSettings(): GlobalSettings {
  * Get project root directory
  */
 export function getProjectRoot(): string {
-  if (process.execPath && process.execPath.endsWith('.exe')) {
+  // Check if running as packaged dove.exe (pkg creates a virtual filesystem)
+  if (process.execPath && process.execPath.includes('dove.exe')) {
     return path.dirname(process.execPath);
   }
-  
+
+  // Development: __dirname is dist/, parent is project root
   const srcDir = __dirname;
   return path.dirname(srcDir);
 }
@@ -328,7 +330,7 @@ export function isWindows(): boolean {
 export function findAllFirmwares(): FirmwareInfo[] {
   const firmwares: FirmwareInfo[] = [];
   const config = loadConfig();
-  
+
   // 1. Check config file
   if (config.firmwarePath) {
     if (fs.existsSync(config.firmwarePath)) {
@@ -337,20 +339,30 @@ export function findAllFirmwares(): FirmwareInfo[] {
         const files = fs.readdirSync(config.firmwarePath);
         for (const file of files) {
           const filePath = path.join(config.firmwarePath!, file);
-          if (fs.statSync(filePath).isFile() && isFirmwareFile(file)) {
+          if (fs.statSync(filePath).isFile() && isValidFirmware(filePath)) {
             firmwares.push(createFirmwareInfo(filePath));
           }
         }
-      } else if (stats.isFile() && isFirmwareFile(config.firmwarePath)) {
+      } else if (stats.isFile() && isValidFirmware(config.firmwarePath)) {
         firmwares.push(createFirmwareInfo(config.firmwarePath));
       }
     }
     return firmwares;
   }
-  
-  // 2. Check workspace quectel_build/release directory
+
+  // 2. Check workspace path
   const workspacePath = findWorkspacePath();
   if (workspacePath) {
+    // 2a. First check if workspace itself contains firmware files (firmware package directory)
+    const workspaceFiles = fs.readdirSync(workspacePath);
+    for (const file of workspaceFiles) {
+      const filePath = path.join(workspacePath, file);
+      if (fs.statSync(filePath).isFile() && isValidFirmware(filePath)) {
+        firmwares.push(createFirmwareInfo(filePath));
+      }
+    }
+
+    // 2b. Then check quectel_build/release directory (if not already found in workspace)
     const releasePath = path.join(workspacePath, 'quectel_build', 'release');
     if (fs.existsSync(releasePath)) {
       const dirs = fs.readdirSync(releasePath);
@@ -360,7 +372,7 @@ export function findAllFirmwares(): FirmwareInfo[] {
           const files = fs.readdirSync(dirPath);
           for (const file of files) {
             const filePath = path.join(dirPath, file);
-            if (fs.statSync(filePath).isFile() && isFirmwareFile(file)) {
+            if (fs.statSync(filePath).isFile() && isValidFirmware(filePath)) {
               firmwares.push(createFirmwareInfo(filePath));
             }
           }
@@ -368,7 +380,7 @@ export function findAllFirmwares(): FirmwareInfo[] {
       }
     }
   }
-  
+
   return firmwares;
 }
 
@@ -401,10 +413,26 @@ export function findFirmwareAuto(): string | null {
  */
 export function isFirmwareFile(filename: string): boolean {
   const lower = filename.toLowerCase();
-  return lower.endsWith('_fbf.bin') || 
-         lower.endsWith('.pac') || 
-         lower.endsWith('.zip') || 
+  // For zip files, need to verify it's a valid ASR ABOOT firmware (contains download.json)
+  if (lower.endsWith('.zip')) {
+    // This will be validated later in findAllFirmwares
+    // Return true for extension check, actual validation happens in createFirmwareInfo
+    return true;
+  }
+  return lower.endsWith('_fbf.bin') ||
+         lower.endsWith('.pac') ||
          lower.endsWith('download_usb.ini');
+}
+
+/**
+ * Check if file is valid firmware (zip files need download.json)
+ */
+export function isValidFirmware(filePath: string): boolean {
+  const lower = filePath.toLowerCase();
+  if (lower.endsWith('.zip')) {
+    return zipIsAdownloadFile(filePath);
+  }
+  return isFirmwareFile(filePath);
 }
 
 /**

@@ -7,3 +7,9 @@ tools/ecflashtool/*
 tools/pacdownload/*
 quectel_build/
 node_modules
+项目汇报-dove.md
+env/env_backup
+firmware+.ini
+.dove/dove.json
+tools/diag/gonzo.exe
+dove.exe

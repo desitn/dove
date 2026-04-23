@@ -155,9 +155,9 @@ function parseMonitorArgs(args: string[]): { portPath: string; options: Partial<
       }
     }
 
-    // Priority 2: Use "DBG" tag port as default for monitoring
+    // Priority 2: Use "UART_DBG" tag port as default for monitoring
     if (!portPath && config.comPorts && config.comPorts.length > 0) {
-      const dbgPort = config.comPorts.find(p => getPortTag(p) === 'DBG');
+      const dbgPort = config.comPorts.find(p => getPortTag(p) === 'UART_DBG');
       if (dbgPort) {
         portPath = dbgPort.port;
         portSource = 'config_default_tag';
@@ -166,7 +166,7 @@ function parseMonitorArgs(args: string[]): { portPath: string; options: Partial<
   }
 
   if (!portPath) {
-    throw new Error('Please specify serial port with -p or --tag, or configure a port with "DBG" tag in dove.json');
+    throw new Error('Please specify serial port with -p or --tag, or configure a port with "UART_DBG" tag in dove.json');
   }
 
   const timeoutValue = parseInt(getArgValue('-t', '--timeout') || '') || 0;
@@ -302,9 +302,9 @@ async function handlePortAt(args: string[]): Promise<number> {
       }
     }
 
-    // Priority 2: Default use "AT" tag port
+    // Priority 2: Default use "UART_AT" tag port
     if (!actualPortPath && config.comPorts && config.comPorts.length > 0) {
-      const atPort = config.comPorts.find(p => getPortTag(p) === 'AT');
+      const atPort = config.comPorts.find(p => getPortTag(p) === 'UART_AT');
       if (atPort) {
         actualPortPath = atPort.port;
       }
@@ -312,7 +312,7 @@ async function handlePortAt(args: string[]): Promise<number> {
 
     // Priority 3: Error with clear guidance
     if (!actualPortPath) {
-      throw new Error('AT port not found. Please configure a port with "AT" tag in dove.json.');
+      throw new Error('AT port not found. Please configure a port with "UART_AT" tag in dove.json.');
     }
   }
 

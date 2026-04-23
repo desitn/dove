@@ -151,7 +151,7 @@ export interface BuildCommandItem {
 /**
  * Port tag types for AI recognition
  */
-export type PortTag = 'AT' | 'DBG' | 'Invalid';
+export type PortTag = 'UART_AT' | 'UART_DBG' | 'USB_AT' | 'USB_DIAG' | 'Invalid';
 
 /**
  * COM port configuration
@@ -159,7 +159,7 @@ export type PortTag = 'AT' | 'DBG' | 'Invalid';
  */
 export interface ComPortConfig {
   port: string;
-  tag: PortTag;             // Single tag: AT, DBG, or Invalid
+  tag: PortTag;             // Single tag: UART_AT, UART_DBG, USB_AT, USB_DIAG, or Invalid
   description?: string;
 }
 

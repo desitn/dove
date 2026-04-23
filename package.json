@@ -28,11 +28,7 @@
       "dist/*.js"
     ],
     "assets": [
-      "tools/**/*",
-      "node_modules/adm-zip/**/*",
-      "node_modules/iconv-lite/**/*",
-      "node_modules/serialport/**/*",
-      "node_modules/@serialport/**/*"
+      "node_modules/@serialport/bindings-cpp/prebuilds/win32-x64/*.node"
     ]
   },
   "devDependencies": {
@@ -47,7 +43,6 @@
   },
   "files": [
     "dist",
-    "tools",
     "README.md",
     "package.json"
   ]
