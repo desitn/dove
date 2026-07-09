@@ -331,11 +331,32 @@ export function findAllFirmwares(): FirmwareInfo[] {
     if (fs.existsSync(config.firmwarePath)) {
       const stats = fs.statSync(config.firmwarePath);
       if (stats.isDirectory()) {
+        // 1a. Scan firmwarePath itself for firmware files
         const files = fs.readdirSync(config.firmwarePath);
         for (const file of files) {
           const filePath = path.join(config.firmwarePath!, file);
           if (fs.statSync(filePath).isFile() && isValidFirmware(filePath)) {
             firmwares.push(createFirmwareInfo(filePath));
+          }
+        }
+
+        // 1b. If no firmwares found directly, check firmwarePath/quectel_build/release/
+        if (firmwares.length === 0) {
+          const releasePath = path.join(config.firmwarePath!, 'quectel_build', 'release');
+          if (fs.existsSync(releasePath)) {
+            const dirs = fs.readdirSync(releasePath);
+            for (const dir of dirs) {
+              const dirPath = path.join(releasePath, dir);
+              if (fs.statSync(dirPath).isDirectory()) {
+                const releaseFiles = fs.readdirSync(dirPath);
+                for (const file of releaseFiles) {
+                  const filePath = path.join(dirPath, file);
+                  if (fs.statSync(filePath).isFile() && isValidFirmware(filePath)) {
+                    firmwares.push(createFirmwareInfo(filePath));
+                  }
+                }
+              }
+            }
           }
         }
       } else if (stats.isFile() && isValidFirmware(config.firmwarePath)) {
