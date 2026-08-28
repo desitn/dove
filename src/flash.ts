@@ -71,12 +71,16 @@ export async function flashFirmware(firmwarePath: string | null = null, options:
       }
     }
     
+let dlPortPath: string | null = null;
     if (!options.skipDlMode && platformConfig?.serial?.autoEnterDlMode) {
       console.log('Checking download mode...');
       const dlPort = await findDownloadPort(platformKey);
       if (!dlPort) {
         console.log('Download port not detected, auto trying to enter download mode');
         const result = await enterDownloadMode(platformKey || firmwareInfo.type, false, 2);
+        if (result.success && result.port) {
+          dlPortPath = result.port;
+        }
         if (!result.success) {
           console.log('Failed to auto enter download mode, please manually enter download mode and retry');
           console.log('Continuing with flash...');
@@ -86,6 +90,7 @@ export async function flashFirmware(firmwarePath: string | null = null, options:
         }
       } else {
         console.log(`Device already in download mode: ${dlPort.path}`);
+        dlPortPath = dlPort.path;
         if (dlPort.type === 'bus') {
           console.log(`   Type: Bus device (${dlPort.description})`);
         } else {
@@ -93,7 +98,7 @@ export async function flashFirmware(firmwarePath: string | null = null, options:
         }
       }
     }
-    
+
     const toolPath = getToolPath(firmwareInfo.type);
     
     if (!fs.existsSync(toolPath)) {
@@ -104,7 +109,7 @@ export async function flashFirmware(firmwarePath: string | null = null, options:
     console.log('Starting flash...');
     console.log('='.repeat(50));
     
-    await executeFlash(toolPath, firmwareInfo.type, firmwareInfo.file, options.progressMode);
+    await executeFlash(toolPath, firmwareInfo.type, firmwareInfo.file, dlPortPath, options.progressMode);
     
     console.log('='.repeat(50));
     console.log('Flash completed successfully!');
@@ -223,6 +228,7 @@ export async function executeFlash(
   toolPath: string,
   toolType: string,
   firmwareFile: string,
+  dlPortPath: string | null = null,
   progressMode?: string | null,
   onProgress?: FlashProgressCallback
 ): Promise<void> {
@@ -231,7 +237,14 @@ export async function executeFlash(
     let args: string[];
 
     const settings = getGlobalSettings();
-    const port = settings.defaultPort || 'auto';
+    // Use detected download port if available, otherwise fallback to config default
+    let port: string;
+    if (dlPortPath) {
+      const match = dlPortPath.match(/\d+$/);
+      port = match ? match[0] : 'auto';
+    } else {
+      port = settings.defaultPort || 'auto';
+    }
 
     if (isWindows()) {
       command = 'cmd';
@@ -240,6 +253,12 @@ export async function executeFlash(
         firmwarePath: firmwareFile,
         port: port
       });
+
+      // If a specific download port was detected, pass -port to the download tool
+      // to avoid interference from other COM ports
+      if (dlPortPath && port !== 'auto') {
+        toolArgs.push('-port', port);
+      }
 
       const cmdStr = `"${toolPath}" ${toolArgs.join(' ')}`;
       args = ['/c', cmdStr];

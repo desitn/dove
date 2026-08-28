@@ -568,7 +568,7 @@ async function flashFirmwareWithProgress(firmwarePath: string): Promise<void> {
     }
 
     // Use executeFlash with progress callback
-    await executeFlash(toolPath, firmwareInfo.type, firmwareInfo.file, null, (progress, status, logLine) => {
+    await executeFlash(toolPath, firmwareInfo.type, firmwareInfo.file, null, null, (progress, status, logLine) => {
       flashProgress = progress;
       flashStatus = status;
       if (logLine) {

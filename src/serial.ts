@@ -407,7 +407,7 @@ export async function enterDownloadMode(
     log('Checking download port...');
     for (let i = 0; i < 10; i++) {
       await new Promise(resolve => setTimeout(resolve, 500));
-      const newDlPort = await findDownloadPort();
+      const newDlPort = await findDownloadPort(platform);
       if (newDlPort) {
         log(`Successfully entered download mode: ${newDlPort.path}`);
         return { success: true, port: newDlPort.path };
